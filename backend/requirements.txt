@@ -1,0 +1,17 @@
+fastapi>=0.110.0
+uvicorn>=0.28.0
+sqlalchemy>=2.0.0
+pydantic>=2.0.0
+pydantic-settings>=2.0.0
+alembic>=1.13.0
+pyjwt>=2.8.0
+passlib[bcrypt]>=1.7.4
+bcrypt>=4.0.1
+email-validator>=2.0.0
+ortools>=9.8.0
+pulp>=2.8.0
+scikit-learn>=1.4.0
+shap>=0.45.0
+prophet>=1.1.5
+numpy>=1.26.0
+pandas>=2.2.0

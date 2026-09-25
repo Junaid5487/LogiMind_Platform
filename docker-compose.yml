@@ -1,0 +1,14 @@
+version: '3.8'
+
+services:
+  logimind-app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: logimind_platform
+    ports:
+      - "8000:8000"
+    environment:
+      - ENVIRONMENT=production
+      - SECRET_KEY=logimind_super_secret_jwt_key_2026_capstone_secure
+    restart: always
