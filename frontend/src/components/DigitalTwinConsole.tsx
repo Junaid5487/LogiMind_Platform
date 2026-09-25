@@ -31,7 +31,7 @@ export const DigitalTwinConsole: React.FC = () => {
 
   React.useEffect(() => {
     handleRunSimulation();
-  }, []);
+  }, [disabledWh, disabledVeh, demandMultiplier, fuelPrice]);
 
   return (
     <div className="p-6 space-y-6">
