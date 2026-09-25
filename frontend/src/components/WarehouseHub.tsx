@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import type { WarehouseItem } from '../types';
 import { rebalanceInventory } from '../services/api';
 import { Warehouse, RefreshCw, AlertTriangle, ArrowRightLeft, PackageCheck } from 'lucide-react';
@@ -22,6 +22,10 @@ export const WarehouseHub: React.FC<WarehouseHubProps> = ({ warehouses }) => {
       setLoading(false);
     }
   };
+
+  useEffect(() => {
+    handleRebalance();
+  }, []);
 
   return (
     <div className="p-6 space-y-6">

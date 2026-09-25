@@ -1,6 +1,8 @@
 import type { DashboardKPIs, WarehouseItem, VehicleItem, RouteItem, CopilotResponse, SimulationResult } from '../types';
 
-const API_BASE_URL = 'http://localhost:8000/api/v1';
+const API_BASE_URL = typeof window !== 'undefined' && window.location.origin.includes('5173')
+  ? 'http://localhost:8000/api/v1'
+  : `${window.location.origin}/api/v1`;
 
 function getHeaders(customHeaders: Record<string, string> = {}): Record<string, string> {
   const token = localStorage.getItem('logimind_token');
@@ -132,7 +134,7 @@ export async function rebalanceInventory(): Promise<any> {
       solver_engine: "PuLP Linear Programming Simplex/CBC Solver",
       total_transfer_cost_usd: 134.68,
       recommendations: [
-        { sku: "SKU-ELEC-101", from_warehouse_id: "w1", from_warehouse_name: "NYC Hub", to_warehouse_id: "w2", to_warehouse_name: "Newark Depot", quantity: 48, estimated_cost_usd: 102.61, rationale: "Prevents stockout at Newark by shifting surplus from NYC." }
+        { sku: "SKU-ELEC-101", from_warehouse_id: "w1111111-1111-1111-1111-111111111111", from_warehouse_name: "Mumbai Central Logistics Hub", to_warehouse_id: "w2222222-2222-2222-2222-222222222222", to_warehouse_name: "Navi Mumbai Cargo Center", quantity: 48, estimated_cost_usd: 102.61, rationale: "Prevents stockout at Navi Mumbai by shifting surplus from Mumbai Central." }
       ]
     };
   }
