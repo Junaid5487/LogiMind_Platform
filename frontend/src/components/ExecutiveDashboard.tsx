@@ -36,7 +36,7 @@ export const ExecutiveDashboard: React.FC<ExecutiveDashboardProps> = ({ kpis, on
             </span>
           </h2>
           <p className="text-sm text-gray-400 mt-1">
-            AI-driven demand forecasting, OR-Tools vehicle route optimization, and predictive fleet health telemetry.
+            AI-driven demand forecasting, Clarke-Wright Savings & 2-Opt vehicle route optimization, and predictive fleet health telemetry.
           </p>
         </div>
         <div className="flex items-center gap-3">

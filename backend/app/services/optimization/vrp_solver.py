@@ -21,168 +21,134 @@ class VRPOptimizer:
         if not self.orders or not self.vehicles:
             return {"routes": [], "total_distance_km": 0.0, "status": "NO_ORDERS"}
 
-        # Exclude vehicles in maintenance from route assignment
+        # Filter out vehicles in maintenance from route assignment
         self.active_vehicles = [v for v in self.vehicles if v.get("status") != "MAINTENANCE"]
         if not self.active_vehicles:
             self.active_vehicles = self.vehicles
 
-        try:
-            from ortools.constraint_solver import routing_enums_pb2
-            from ortools.constraint_solver import pywrapcp
-            return self._solve_ortools()
-        except ImportError:
-            return self._solve_heuristic()
+        return self._solve_clarke_wright_2opt()
 
-    def _solve_ortools(self) -> Dict[str, Any]:
-        from ortools.constraint_solver import routing_enums_pb2
-        from ortools.constraint_solver import pywrapcp
-
+    def _solve_clarke_wright_2opt(self) -> Dict[str, Any]:
         depot = self.warehouses[0] if self.warehouses else {"lat": 19.0760, "lng": 72.8777}
-        locations = [(depot["lat"], depot["lng"])] + [(o["dest_lat"], o["dest_lng"]) for o in self.orders]
+        depot_lat = depot.get("lat") or depot.get("location_lat", 19.0760)
+        depot_lng = depot.get("lng") or depot.get("location_lng", 72.8777)
 
-        num_locations = len(locations)
-        num_vehicles = len(self.active_vehicles)
+        num_orders = len(self.orders)
+        if num_orders == 0:
+            return {"routes": [], "total_distance_km": 0.0, "status": "NO_ORDERS"}
 
-        distance_matrix = []
-        for i in range(num_locations):
+        # 1. Compute Distance from Depot to each order location
+        depot_dists = [haversine_distance_km(depot_lat, depot_lng, o["dest_lat"], o["dest_lng"]) for o in self.orders]
+
+        # 2. Compute Inter-Order Distance Matrix
+        dist_matrix = []
+        for i in range(num_orders):
             row = []
-            for j in range(num_locations):
-                dist_km = haversine_distance_km(locations[i][0], locations[i][1], locations[j][0], locations[j][1])
-                row.append(int(dist_km * 1000))
-            distance_matrix.append(row)
+            for j in range(num_orders):
+                if i == j:
+                    row.append(0.0)
+                else:
+                    d = haversine_distance_km(self.orders[i]["dest_lat"], self.orders[i]["dest_lng"],
+                                              self.orders[j]["dest_lat"], self.orders[j]["dest_lng"])
+                    row.append(d)
+            dist_matrix.append(row)
 
-        manager = pywrapcp.RoutingIndexManager(num_locations, num_vehicles, 0)
-        routing = pywrapcp.RoutingModel(manager)
+        # 3. Calculate Clarke-Wright Savings S_ij = d(0, i) + d(0, j) - d(i, j)
+        savings = []
+        for i in range(num_orders):
+            for j in range(i + 1, num_orders):
+                s_val = depot_dists[i] + depot_dists[j] - dist_matrix[i][j]
+                savings.append((s_val, i, j))
 
-        def distance_callback(from_index, to_index):
-            from_node = manager.IndexToNode(from_index)
-            to_node = manager.IndexToNode(to_index)
-            return distance_matrix[from_node][to_node]
+        # Sort savings in descending order
+        savings.sort(key=lambda x: x[0], reverse=True)
 
-        transit_callback_index = routing.RegisterTransitCallback(distance_callback)
-        routing.SetArcCostEvaluatorOfAllVehicles(transit_callback_index)
+        # 4. Initialize individual routes (Depot -> i -> Depot)
+        routes = [[i] for i in range(num_orders)]
 
-        # Capacity Dimension
-        demands = [0] + [int(o.get("weight_kg", 5.0)) for o in self.orders]
-        capacities = [int(v.get("capacity_kg", 1500.0)) for v in self.active_vehicles]
+        def find_route(idx):
+            for r in routes:
+                if idx in r:
+                    return r
+            return None
 
-        def demand_callback(from_index):
-            from_node = manager.IndexToNode(from_index)
-            return demands[from_node]
+        # 5. Merge routes based on Clarke-Wright savings and vehicle capacity constraints
+        max_capacity = max((v.get("capacity_kg", 1500.0) for v in self.active_vehicles), default=1500.0)
+        max_stops_per_veh = max(1, math.ceil(num_orders / len(self.active_vehicles)))
 
-        demand_callback_index = routing.RegisterUnaryTransitCallback(demand_callback)
-        routing.AddDimensionWithVehicleCapacity(
-            demand_callback_index, 0, capacities, True, "Capacity"
-        )
+        for s_val, i, j in savings:
+            r_i = find_route(i)
+            r_j = find_route(j)
 
-        # Stops Dimension (Max 3 stops per vehicle to enforce balanced distribution)
-        max_stops_per_vehicle = max(1, math.ceil(len(self.orders) / num_vehicles) + 1)
-        routing.AddConstantDimension(1, max_stops_per_vehicle + 1, True, "Stops")
+            if r_i is not None and r_j is not None and r_i != r_j:
+                if (r_i[-1] == i or r_i[0] == i) and (r_j[0] == j or r_j[-1] == j):
+                    if r_i[0] == i:
+                        r_i.reverse()
+                    if r_j[-1] == j:
+                        r_j.reverse()
 
-        search_parameters = pywrapcp.DefaultRoutingSearchParameters()
-        search_parameters.first_solution_strategy = (
-            routing_enums_pb2.FirstSolutionStrategy.PATH_CHEAPEST_ARC
-        )
-        search_parameters.time_limit.seconds = 3
+                    combined_orders = r_i + r_j
+                    combined_weight = sum(self.orders[idx].get("weight_kg", 5.0) for idx in combined_orders)
 
-        solution = routing.SolveWithParameters(search_parameters)
+                    if combined_weight <= max_capacity and len(combined_orders) <= (max_stops_per_veh + 2):
+                        routes.remove(r_i)
+                        routes.remove(r_j)
+                        routes.append(combined_orders)
 
-        if not solution:
-            return self._solve_heuristic()
+        # 6. Apply 2-Opt Local Search to each merged route
+        optimized_routes = []
+        for r in routes:
+            optimized_r = self._apply_2opt(r, depot_lat, depot_lng, dist_matrix, depot_dists)
+            optimized_routes.append(optimized_r)
 
-        assigned_routes = []
-        total_dist_meters = 0
-
-        for vehicle_idx in range(num_vehicles):
-            index = routing.Start(vehicle_idx)
-            route_stops = []
-            route_dist = 0
-            seq = 1
-
-            while not routing.IsEnd(index):
-                node = manager.IndexToNode(index)
-                if node > 0:
-                    order = self.orders[node - 1]
-                    eta_mins = int(route_dist / 1000 / 40.0 * 60)
-                    eta_str = f"+{eta_mins // 60}h {eta_mins % 60}m"
-                    route_stops.append({
-                        "sequence": seq,
-                        "order_id": order["id"],
-                        "customer_name": order.get("customer_name", "Customer"),
-                        "dest_lat": order["dest_lat"],
-                        "dest_lng": order["dest_lng"],
-                        "eta": eta_str,
-                        "priority": order.get("priority", "NORMAL")
-                    })
-                    seq += 1
-
-                previous_index = index
-                index = solution.Value(routing.NextVar(index))
-                route_dist += routing.GetArcCostForVehicle(previous_index, index, vehicle_idx)
-
-            if route_stops:
-                dist_km = round(route_dist / 1000.0, 2)
-                v_obj = self.active_vehicles[vehicle_idx]
-                fuel_multiplier = 0.15 if v_obj.get("fuel_type") == "ELECTRIC" else 0.28
-                fuel_liters = round(dist_km * fuel_multiplier, 1)
-                carbon_kg = round(fuel_liters * (0.0 if v_obj.get("fuel_type") == "ELECTRIC" else 2.68), 1)
-
-                assigned_routes.append({
-                    "route_id": f"RT-{v_obj['id']}-OPT",
-                    "vehicle_id": v_obj["id"],
-                    "vehicle_name": v_obj.get("name", "Vehicle"),
-                    "driver_id": f"DRV-{vehicle_idx+1:02d}",
-                    "total_distance_km": dist_km,
-                    "fuel_estimate_liters": fuel_liters,
-                    "carbon_emissions_kg": carbon_kg,
-                    "stops": route_stops,
-                    "status": "OPTIMIZED"
-                })
-                total_dist_meters += route_dist
-
-        return {
-            "routes": assigned_routes,
-            "total_distance_km": round(total_dist_meters / 1000.0, 2),
-            "solver_engine": "Google OR-Tools VRP Solver (Guided Local Search)",
-            "status": "SUCCESS"
-        }
-
-    def _solve_heuristic(self) -> Dict[str, Any]:
-        unassigned = list(self.orders)
-        depot = self.warehouses[0] if self.warehouses else {"lat": 19.0760, "lng": 72.8777}
-
+        # 7. Assign optimized routes to active vehicles
         assigned_routes = []
         total_dist_km = 0.0
 
-        for idx, vehicle in enumerate(self.vehicles):
-            if not unassigned:
-                break
+        for v_idx, order_indices in enumerate(optimized_routes):
+            if v_idx >= len(self.active_vehicles):
+                if assigned_routes:
+                    v_obj = self.active_vehicles[-1]
+                    target_route = assigned_routes[-1]
+                    seq = len(target_route["stops"]) + 1
+                    curr_lat = target_route["stops"][-1]["dest_lat"] if target_route["stops"] else depot_lat
+                    curr_lng = target_route["stops"][-1]["dest_lng"] if target_route["stops"] else depot_lng
+                    extra_dist = 0.0
 
+                    for idx in order_indices:
+                        order = self.orders[idx]
+                        step_d = haversine_distance_km(curr_lat, curr_lng, order["dest_lat"], order["dest_lng"])
+                        extra_dist += step_d
+                        curr_lat, curr_lng = order["dest_lat"], order["dest_lng"]
+                        eta_mins = int((target_route["total_distance_km"] + extra_dist) / 40.0 * 60)
+                        target_route["stops"].append({
+                            "sequence": seq,
+                            "order_id": order["id"],
+                            "customer_name": order.get("customer_name", "Customer"),
+                            "dest_lat": order["dest_lat"],
+                            "dest_lng": order["dest_lng"],
+                            "eta": f"+{eta_mins // 60}h {eta_mins % 60}m",
+                            "priority": order.get("priority", "NORMAL")
+                        })
+                        seq += 1
+
+                    target_route["total_distance_km"] = round(target_route["total_distance_km"] + extra_dist, 2)
+                    fuel_mult = 0.15 if v_obj.get("fuel_type") == "ELECTRIC" else 0.28
+                    target_route["fuel_estimate_liters"] = round(target_route["total_distance_km"] * fuel_mult, 1)
+                    target_route["carbon_emissions_kg"] = round(target_route["fuel_estimate_liters"] * (0.0 if v_obj.get("fuel_type") == "ELECTRIC" else 2.68), 1)
+                continue
+
+            v_obj = self.active_vehicles[v_idx]
             route_stops = []
-            current_lat, current_lng = depot["lat"], depot["lng"]
-            current_capacity = vehicle.get("capacity_kg", 1500.0)
+            curr_lat, curr_lng = depot_lat, depot_lng
             route_dist = 0.0
             seq = 1
 
-            while unassigned:
-                best_idx = None
-                best_dist = float("inf")
-
-                for i, order in enumerate(unassigned):
-                    w = order.get("weight_kg", 5.0)
-                    if w <= current_capacity:
-                        d = haversine_distance_km(current_lat, current_lng, order["dest_lat"], order["dest_lng"])
-                        if d < best_dist:
-                            best_dist = d
-                            best_idx = i
-
-                if best_idx is None:
-                    break
-
-                order = unassigned.pop(best_idx)
-                current_capacity -= order.get("weight_kg", 5.0)
-                route_dist += best_dist
-                current_lat, current_lng = order["dest_lat"], order["dest_lng"]
+            for idx in order_indices:
+                order = self.orders[idx]
+                step_d = haversine_distance_km(curr_lat, curr_lng, order["dest_lat"], order["dest_lng"])
+                route_dist += step_d
+                curr_lat, curr_lng = order["dest_lat"], order["dest_lng"]
 
                 eta_mins = int(route_dist / 40.0 * 60)
                 route_stops.append({
@@ -196,27 +162,60 @@ class VRPOptimizer:
                 })
                 seq += 1
 
-            if route_stops:
-                dist_km = round(route_dist, 2)
-                fuel_liters = round(dist_km * 0.28, 1)
-                carbon_kg = round(fuel_liters * 2.68, 1)
+            dist_km = round(route_dist, 2)
 
-                assigned_routes.append({
-                    "route_id": f"RT-{vehicle['id']}-HEUR",
-                    "vehicle_id": vehicle["id"],
-                    "vehicle_name": vehicle.get("name", "Vehicle"),
-                    "driver_id": f"DRV-{idx+1:02d}",
-                    "total_distance_km": dist_km,
-                    "fuel_estimate_liters": fuel_liters,
-                    "carbon_emissions_kg": carbon_kg,
-                    "stops": route_stops,
-                    "status": "OPTIMIZED"
-                })
-                total_dist_km += dist_km
+            fuel_multiplier = 0.15 if v_obj.get("fuel_type") == "ELECTRIC" else 0.28
+            fuel_liters = round(dist_km * fuel_multiplier, 1)
+            carbon_kg = round(fuel_liters * (0.0 if v_obj.get("fuel_type") == "ELECTRIC" else 2.68), 1)
+
+            assigned_routes.append({
+                "route_id": f"RT-{v_obj['id']}-OPT",
+                "vehicle_id": v_obj["id"],
+                "vehicle_name": v_obj.get("name", "Vehicle"),
+                "driver_id": f"DRV-{v_idx+1:02d}",
+                "total_distance_km": dist_km,
+                "fuel_estimate_liters": fuel_liters,
+                "carbon_emissions_kg": carbon_kg,
+                "stops": route_stops,
+                "status": "OPTIMIZED"
+            })
+            total_dist_km += dist_km
 
         return {
             "routes": assigned_routes,
             "total_distance_km": round(total_dist_km, 2),
-            "solver_engine": "Nearest-Neighbor VRP Heuristic",
+            "solver_engine": "Clarke-Wright Savings Algorithm + 2-Opt Local Search",
             "status": "SUCCESS"
         }
+
+    def _apply_2opt(self, route_indices: List[int], depot_lat: float, depot_lng: float, dist_matrix: List[List[float]], depot_dists: List[float]) -> List[int]:
+        if len(route_indices) <= 2:
+            return route_indices
+
+        best_route = list(route_indices)
+
+        def calculate_total_dist(r):
+            d = depot_dists[r[0]]
+            for i in range(len(r) - 1):
+                d += dist_matrix[r[i]][r[i+1]]
+            d += depot_dists[r[-1]]
+            return d
+
+        best_dist = calculate_total_dist(best_route)
+        improved = True
+
+        while improved:
+            improved = False
+            for i in range(len(best_route) - 1):
+                for j in range(i + 1, len(best_route)):
+                    new_route = best_route[:i] + list(reversed(best_route[i:j+1])) + best_route[j+1:]
+                    new_dist = calculate_total_dist(new_route)
+                    if new_dist < best_dist - 0.001:
+                        best_route = new_route
+                        best_dist = new_dist
+                        improved = True
+                        break
+                if improved:
+                    break
+
+        return best_route

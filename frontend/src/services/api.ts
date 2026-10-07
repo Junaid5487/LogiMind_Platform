@@ -87,7 +87,7 @@ export async function optimizeRoutes(): Promise<{ routes: RouteItem[]; total_dis
     return await res.json();
   } catch (e) {
     return {
-      solver_engine: "Google OR-Tools VRP Solver (Guided Local Search)",
+      solver_engine: "Clarke-Wright Savings Algorithm + 2-Opt Local Search",
       total_distance_km: 142.5,
       routes: [
         {
