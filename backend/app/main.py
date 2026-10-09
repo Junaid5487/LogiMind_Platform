@@ -23,6 +23,8 @@ from app.api.v1.copilot import router as copilot_router
 from app.api.v1.simulation import router as simulation_router
 from app.api.v1.fleet import router as fleet_router
 from app.api.v1.inventory import router as inventory_router
+from app.api.v1.driver import router as driver_router
+from app.api.v1.scenario import router as scenario_router
 
 setup_logging()
 
@@ -59,6 +61,8 @@ app.include_router(copilot_router, prefix=settings.API_V1_STR)
 app.include_router(simulation_router, prefix=settings.API_V1_STR)
 app.include_router(fleet_router, prefix=settings.API_V1_STR)
 app.include_router(inventory_router, prefix=settings.API_V1_STR)
+app.include_router(driver_router, prefix=settings.API_V1_STR)
+app.include_router(scenario_router, prefix=settings.API_V1_STR)
 
 frontend_dist = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "frontend", "dist"))
 if os.path.exists(frontend_dist):

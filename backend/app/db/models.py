@@ -74,6 +74,20 @@ class Warehouse(Base):
     storage_capacity_sqft = Column(Float, default=100000.0)
     status = Column(String(20), default="ACTIVE")
 
+class Order(Base):
+    """Manual scenario order (destination) — mirrors the experiment benchmark
+    instance field format (dest_lat/dest_lng/weight_kg/priority)."""
+    __tablename__ = "orders"
+    order_id = Column(String(36), primary_key=True, default=generate_uuid)
+    warehouse_id = Column(String(36), ForeignKey("warehouses.warehouse_id"), nullable=True)
+    customer_name = Column(String(120), nullable=False)
+    dest_lat = Column(Float, nullable=False)
+    dest_lng = Column(Float, nullable=False)
+    weight_kg = Column(Float, nullable=False, default=10.0)
+    priority = Column(String(30), default="NORMAL")
+    status = Column(String(30), default="PENDING")
+    created_at = Column(DateTime, default=datetime.utcnow)
+
 class Product(Base):
     __tablename__ = "products"
     product_id = Column(String(36), primary_key=True, default=generate_uuid)

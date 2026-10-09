@@ -15,3 +15,8 @@ __pycache__/
 .idea/
 .vscode/
 .DS_Store
+
+# Experiment caches (regenerate with experiments/README.md commands)
+experiments/data/
+experiments/artifacts/*.pkl
+experiments/**/__pycache__/

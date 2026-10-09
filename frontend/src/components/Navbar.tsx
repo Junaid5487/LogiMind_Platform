@@ -1,24 +1,55 @@
 import React from 'react';
 import { useAuth } from '../context/AuthContext';
-import { LayoutDashboard, Navigation, Warehouse, Activity, Cpu, Bot, User, LogOut } from 'lucide-react';
+import { LayoutDashboard, Navigation, Warehouse, Activity, Cpu, Bot, User, LogOut, UserCheck, Users, Truck, Boxes } from 'lucide-react';
+import type { UserRole } from '../types';
 
 interface NavbarProps {
   activeTab: string;
   setActiveTab: (tab: string) => void;
   onOpenCopilot: () => void;
   onOpenAuth: () => void;
+  role: UserRole;
+  onRoleChange: (role: UserRole) => void;
 }
 
-export const Navbar: React.FC<NavbarProps> = ({ activeTab, setActiveTab, onOpenCopilot, onOpenAuth }) => {
+interface NavItem {
+  id: string;
+  label: string;
+  icon: React.ComponentType<{ className?: string }>;
+  roles: UserRole[];
+}
+
+const ALL_NAV_ITEMS: NavItem[] = [
+  { id: 'dashboard', label: 'Executive Dashboard', icon: LayoutDashboard, roles: ['admin'] },
+  { id: 'routemap', label: 'Live Route VRP Map', icon: Navigation, roles: ['admin'] },
+  { id: 'warehouse', label: 'Warehouse Hub', icon: Warehouse, roles: ['admin'] },
+  { id: 'fleet', label: 'Fleet Health & XAI', icon: Activity, roles: ['admin'] },
+  { id: 'simulator', label: 'Digital Twin Console', icon: Cpu, roles: ['admin'] },
+  { id: 'driver', label: 'Driver Portal', icon: UserCheck, roles: ['driver'] },
+  { id: 'fleetmgr', label: 'Fleet Operations', icon: Truck, roles: ['fleet_manager'] },
+  { id: 'whmgr', label: 'Inventory Control', icon: Boxes, roles: ['warehouse_manager'] },
+];
+
+export const Navbar: React.FC<NavbarProps> = ({ activeTab, setActiveTab, onOpenCopilot, onOpenAuth, role, onRoleChange }) => {
   const { token, user, logout } = useAuth();
 
-  const navItems = [
-    { id: 'dashboard', label: 'Executive Dashboard', icon: LayoutDashboard },
-    { id: 'routemap', label: 'Live Route VRP Map', icon: Navigation },
-    { id: 'warehouse', label: 'Warehouse Hub', icon: Warehouse },
-    { id: 'fleet', label: 'Fleet Health & XAI', icon: Activity },
-    { id: 'simulator', label: 'Digital Twin Console', icon: Cpu },
-  ];
+  const navItems = ALL_NAV_ITEMS.filter(item => item.roles.includes(role));
+
+  const roleSwitcher = (
+    <div className="flex items-center gap-1 glass-card px-2 py-1 rounded-xl border border-gray-800">
+      <span className="text-[10px] text-gray-400 font-semibold uppercase">Role:</span>
+      <select
+        value={role}
+        onChange={(e) => onRoleChange(e.target.value as UserRole)}
+        className="bg-gray-900 border border-gray-700 rounded-lg px-2 py-1 text-xs text-white focus:outline-none focus:border-sky-500"
+      >
+        <option value="admin" className="text-gray-200">Administrator</option>
+        <option value="fleet_manager" className="text-gray-200">Fleet Manager</option>
+        <option value="warehouse_manager" className="text-gray-200">Warehouse Manager</option>
+        <option value="driver" className="text-gray-200">Driver</option>
+      </select>
+    </div>
+  );
 
   return (
     <nav className="glass-panel sticky top-0 z-40 px-6 py-3 border-b border-gray-800 flex items-center justify-between">
@@ -32,7 +63,7 @@ export const Navbar: React.FC<NavbarProps> = ({ activeTab, setActiveTab, onOpenC
         </div>
       </div>
 
-      <div className="hidden md:flex items-center gap-1 glass-card px-2 py-1 rounded-xl border border-gray-800">
+      <div className="hidden md:flex items-center gap-1 flex-wrap">
         {navItems.map((item) => {
           const Icon = item.icon;
           const isActive = activeTab === item.id;
@@ -54,6 +85,7 @@ export const Navbar: React.FC<NavbarProps> = ({ activeTab, setActiveTab, onOpenC
       </div>
 
       <div className="flex items-center gap-3">
+        {roleSwitcher}
         <button
           onClick={onOpenCopilot}
           className="px-3.5 py-1.5 rounded-xl bg-gradient-to-r from-purple-500/20 to-indigo-500/20 border border-purple-500/30 text-purple-300 hover:text-white text-xs font-semibold transition-all flex items-center gap-2 shadow-lg shadow-purple-500/10"

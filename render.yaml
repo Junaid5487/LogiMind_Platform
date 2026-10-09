@@ -1,0 +1,14 @@
+# Render Blueprint — LogiMind Platform (single-service Docker deploy)
+# The Dockerfile builds the Vite frontend and serves it from FastAPI,
+# so one web service hosts API + UI on the same origin.
+services:
+  - type: web
+    name: logimind-platform
+    runtime: docker
+    plan: free
+    healthCheckPath: /api/v1/health
+    envVars:
+      - key: ENVIRONMENT
+        value: production
+      - key: SECRET_KEY
+        generateValue: true

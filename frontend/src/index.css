@@ -17,3 +17,19 @@
     border: 1px solid rgba(255, 255, 255, 0.05);
   }
 }
+
+/* Live Route Map — dark base under tiles + invert light OSM tiles to match
+   the dark theme (markers/polylines live in sibling panes and are untouched). */
+.logimind-map.leaflet-container {
+  background: #161c28;
+}
+.logimind-map .leaflet-tile-pane {
+  filter: invert(1) hue-rotate(180deg) brightness(0.95) contrast(0.92);
+}
+.logimind-map .leaflet-control-attribution {
+  background: rgba(11, 15, 23, 0.75) !important;
+  color: #9ca3af;
+}
+.logimind-map .leaflet-control-attribution a {
+  color: #7dd3fc;
+}

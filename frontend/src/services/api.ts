@@ -1,4 +1,4 @@
-import type { DashboardKPIs, WarehouseItem, VehicleItem, RouteItem, CopilotResponse, SimulationResult } from '../types';
+import type { DashboardKPIs, WarehouseItem, VehicleItem, RouteItem, CopilotResponse, SimulationResult, DriverListItem, InventoryItem, ShiftInventoryPayload, ShiftInventoryResult, ScenarioOrder, DefaultRoutesResult } from '../types';
 
 const API_BASE_URL = typeof window !== 'undefined' && window.location.origin.includes('5173')
   ? 'http://localhost:8000/api/v1'
@@ -172,7 +172,7 @@ export async function askCopilot(query: string): Promise<CopilotResponse> {
   } catch (e) {
     return {
       query,
-      answer: "I analyzed the operational SOPs and live system telemetry. Vehicle V-104 is currently flagged for maintenance due to radiator coolant temperature elevation (98.5°C). Re-running OR-Tools VRP Solver is recommended.",
+      answer: "I analyzed the operational SOPs and live system telemetry. Vehicle V-104 is currently flagged for maintenance due to radiator coolant temperature elevation (98.5\u00b0C). Re-running the route optimizer (Clarke-Wright Savings + 2-Opt) is recommended.",
       citations: [{ document_id: "DOC-SOP-002", title: "Fleet Maintenance SOP", type: "SOP", excerpt: "Engine temp exceeding 96°C triggers maintenance alert." }],
       suggested_actions: [
         { label: "Run VRP Optimization", action: "RUN_VRP", params: {} },
@@ -219,3 +219,290 @@ export async function fetchVehicleHealth(vehicleId: string): Promise<any> {
     };
   }
 }
+
+export async function fetchDriverActiveRoute(driverId: string = "DRV-01"): Promise<any> {
+  try {
+    const res = await fetch(`${API_BASE_URL}/driver/me/route?driver_id=${driverId}`, { headers: getHeaders() });
+    if (!res.ok) throw new Error('Failed to fetch driver route');
+    return await res.json();
+  } catch (e) {
+    return {
+      driver_id: driverId,
+      driver_name: "Rahul Sharma",
+      license_number: "MH-04-2022-0094821",
+      vehicle_id: "V-101",
+      vehicle_name: "Tata Prima 5530.S",
+      vehicle_type: "HEAVY_TRUCK",
+      fuel_type: "DIESEL",
+      fuel_level_pct: 88,
+      engine_temp_c: 85.0,
+      odometer_km: 62000.0,
+      health_status: "NORMAL",
+      trip_status: "IN_PROGRESS",
+      assigned_route: {
+        route_id: "RT-V101-OPT",
+        total_distance_km: 82.5,
+        estimated_fuel_liters: 23.1,
+        carbon_emissions_kg: 61.9,
+        stops: [
+          { sequence: 1, order_id: "ORD-101", customer_name: "Apex BioMed South Mumbai", address: "Colaba Industrial Estate, South Mumbai", dest_lat: 18.9220, dest_lng: 72.8347, eta: "+0h 25m", weight_kg: 250.0, priority: "CRITICAL_COLD_CHAIN", status: "DELIVERED", delivered_at: "09:45 AM" },
+          { sequence: 2, order_id: "ORD-102", customer_name: "PharmaDist Thane West", address: "Ghoshal Logistics Hub, Thane", dest_lat: 19.2183, dest_lng: 72.9781, eta: "+0h 55m", weight_kg: 180.0, priority: "HIGH", status: "IN_TRANSIT", delivered_at: null }
+        ]
+      }
+    };
+  }
+}
+
+export async function updateDriverStopStatus(orderId: string, status: string, exceptionNote?: string, driverId: string = "DRV-01", delayMinutes?: number): Promise<any> {
+  try {
+    const res = await fetch(`${API_BASE_URL}/driver/stops/${orderId}/status?driver_id=${driverId}`, {
+      method: 'POST',
+      headers: getHeaders({ 'Content-Type': 'application/json' }),
+      body: JSON.stringify({ status, exception_note: exceptionNote, delay_minutes: delayMinutes }),
+    });
+    if (!res.ok) throw new Error('Failed to update stop status');
+    return await res.json();
+  } catch (e) {
+    return { status: "SUCCESS", order_id: orderId, new_status: status };
+  }
+}
+
+export async function fetchDrivers(): Promise<DriverListItem[]> {
+  try {
+    const res = await fetch(`${API_BASE_URL}/drivers`, { headers: getHeaders() });
+    if (!res.ok) throw new Error('Failed to fetch drivers');
+    return await res.json();
+  } catch (e) {
+    return [
+      { driver_id: 'DRV-01', driver_name: 'Rahul Sharma', license_number: 'MH-04-2022-0094821', phone: '+91-98200-11223', experience_years: 8, availability_status: 'ON_TRIP', rating_score: 4.8, vehicle_id: 'V-101', vehicle_name: 'Tata Prima 5530.S', vehicle_type: 'HEAVY_TRUCK', route_id: 'RT-V101-OPT' },
+      { driver_id: 'DRV-02', driver_name: 'Amit Varma', license_number: 'MH-12-2023-0182743', phone: '+91-98765-44556', experience_years: 4, availability_status: 'ON_TRIP', rating_score: 4.6, vehicle_id: 'V-102', vehicle_name: 'Mahindra Treo Zor EV', vehicle_type: 'EV_VAN', route_id: 'RT-V102-OPT' },
+    ];
+  }
+}
+
+export interface CreateDriverPayload {
+  driver_name: string;
+  license_number: string;
+  vehicle_id: string;
+  vehicle_name: string;
+  vehicle_type?: string;
+  phone?: string;
+  experience_years?: number;
+}
+
+export async function addDriver(payload: CreateDriverPayload): Promise<{ status: string; driver: DriverListItem }> {
+  const res = await fetch(`${API_BASE_URL}/drivers`, {
+    method: 'POST',
+    headers: getHeaders({ 'Content-Type': 'application/json' }),
+    body: JSON.stringify(payload),
+  });
+  if (!res.ok) {
+    let detail = 'Failed to add driver';
+    try { const err = await res.json(); detail = err.detail || detail; } catch { /* keep default */ }
+    throw new Error(detail);
+  }
+  return await res.json();
+}
+
+export async function removeDriver(driverId: string): Promise<{ status: string; driver: DriverListItem }> {
+  const res = await fetch(`${API_BASE_URL}/drivers/${driverId}`, {
+    method: 'DELETE',
+    headers: getHeaders(),
+  });
+  if (!res.ok) throw new Error('Failed to remove driver');
+  return await res.json();
+}
+
+export async function fetchInventory(): Promise<InventoryItem[]> {
+  try {
+    const res = await fetch(`${API_BASE_URL}/inventory`, { headers: getHeaders() });
+    if (!res.ok) throw new Error('Failed to fetch inventory');
+    return await res.json();
+  } catch (e) {
+    return [
+      { inventory_id: 'INV-01', warehouse_id: 'w1111111-1111-1111-1111-111111111111', sku: 'SKU-ELEC-101', item_name: 'Electronic Components Kit', quantity: 140, reorder_threshold: 30, unit: 'units' },
+      { inventory_id: 'INV-02', warehouse_id: 'w2222222-2222-2222-2222-222222222222', sku: 'SKU-ELEC-101', item_name: 'Electronic Components Kit', quantity: 12, reorder_threshold: 30, unit: 'units' },
+      { inventory_id: 'INV-03', warehouse_id: 'w3333333-3333-3333-3333-333333333333', sku: 'SKU-ELEC-101', item_name: 'Electronic Components Kit', quantity: 55, reorder_threshold: 30, unit: 'units' },
+      { inventory_id: 'INV-04', warehouse_id: 'w1111111-1111-1111-1111-111111111111', sku: 'SKU-PHAR-201', item_name: 'Pharmaceutical Supplies', quantity: 45, reorder_threshold: 15, unit: 'boxes' },
+      { inventory_id: 'INV-05', warehouse_id: 'w2222222-2222-2222-2222-222222222222', sku: 'SKU-PHAR-201', item_name: 'Pharmaceutical Supplies', quantity: 8, reorder_threshold: 15, unit: 'boxes' },
+    ];
+  }
+}
+
+export interface CreateInventoryItemPayload {
+  warehouse_id: string;
+  sku: string;
+  item_name: string;
+  quantity: number;
+  reorder_threshold: number;
+  unit: string;
+}
+
+export async function addInventoryItem(payload: CreateInventoryItemPayload): Promise<{ status: string; item: InventoryItem }> {
+  const res = await fetch(`${API_BASE_URL}/inventory`, {
+    method: 'POST',
+    headers: getHeaders({ 'Content-Type': 'application/json' }),
+    body: JSON.stringify(payload),
+  });
+  if (!res.ok) {
+    let detail = 'Failed to add inventory item';
+    try { const err = await res.json(); detail = err.detail || detail; } catch { /* keep default */ }
+    throw new Error(detail);
+  }
+  return await res.json();
+}
+
+export async function removeInventoryItem(inventoryId: string): Promise<{ status: string; item: InventoryItem }> {
+  const res = await fetch(`${API_BASE_URL}/inventory/${inventoryId}`, {
+    method: 'DELETE',
+    headers: getHeaders(),
+  });
+  if (!res.ok) {
+    let detail = 'Failed to remove inventory item';
+    try { const err = await res.json(); detail = err.detail || detail; } catch { /* keep default */ }
+    throw new Error(detail);
+  }
+  return await res.json();
+}
+
+export async function shiftInventory(payload: ShiftInventoryPayload): Promise<ShiftInventoryResult> {
+  const res = await fetch(`${API_BASE_URL}/inventory/shift`, {
+    method: 'POST',
+    headers: getHeaders({ 'Content-Type': 'application/json' }),
+    body: JSON.stringify(payload),
+  });
+  if (!res.ok) {
+    let detail = 'Failed to shift inventory';
+    try { const err = await res.json(); detail = err.detail || detail; } catch { /* keep default */ }
+    throw new Error(detail);
+  }
+  return await res.json();
+}
+
+async function parseApiError(res: Response, fallback: string): Promise<never> {
+  let detail = fallback;
+  try { const err = await res.json(); detail = err.detail || detail; } catch { /* keep default */ }
+  throw new Error(detail);
+}
+
+
+
+export interface CreateOrderPayload {
+  customer_name: string;
+  dest_lat: number;
+  dest_lng: number;
+  weight_kg: number;
+  priority: string;
+  warehouse_id?: string | null;
+}
+
+export async function fetchScenarioOrders(): Promise<ScenarioOrder[]> {
+  const res = await fetch(`${API_BASE_URL}/scenario/orders`, { headers: getHeaders() });
+  if (!res.ok) throw new Error('Failed to fetch scenario orders');
+  return await res.json();
+}
+
+export async function addScenarioOrder(payload: CreateOrderPayload): Promise<ScenarioOrder> {
+  const res = await fetch(`${API_BASE_URL}/scenario/orders`, {
+    method: 'POST',
+    headers: getHeaders({ 'Content-Type': 'application/json' }),
+    body: JSON.stringify(payload),
+  });
+  if (!res.ok) await parseApiError(res, 'Failed to add order');
+  return await res.json();
+}
+
+export async function removeScenarioOrder(orderId: string): Promise<void> {
+  const res = await fetch(`${API_BASE_URL}/scenario/orders/${orderId}`, {
+    method: 'DELETE',
+    headers: getHeaders(),
+  });
+  if (!res.ok) await parseApiError(res, 'Failed to remove order');
+}
+
+export async function resetScenario(preset: 'demo' | 'empty'): Promise<{ preset: string; orders: number }> {
+  const res = await fetch(`${API_BASE_URL}/scenario/reset`, {
+    method: 'POST',
+    headers: getHeaders({ 'Content-Type': 'application/json' }),
+    body: JSON.stringify({ preset }),
+  });
+  if (!res.ok) await parseApiError(res, 'Failed to reset scenario');
+  return await res.json();
+}
+
+export async function fetchDefaultRoutes(strategy = 'nearest_neighbor'): Promise<DefaultRoutesResult> {
+  const res = await fetch(`${API_BASE_URL}/routes/default?strategy=${strategy}`, { headers: getHeaders() });
+  if (!res.ok) await parseApiError(res, 'Failed to fetch default routes');
+  return await res.json();
+}
+
+export interface CreateVehiclePayload {
+  brand: string;
+  model?: string;
+  vehicle_type?: string;
+  capacity_kg: number;
+  fuel_type?: string;
+  status?: string;
+}
+
+export async function addVehicle(payload: CreateVehiclePayload): Promise<VehicleItem> {
+  const res = await fetch(`${API_BASE_URL}/vehicles`, {
+    method: 'POST',
+    headers: getHeaders({ 'Content-Type': 'application/json' }),
+    body: JSON.stringify(payload),
+  });
+  if (!res.ok) await parseApiError(res, 'Failed to add vehicle');
+  const v = await res.json();
+  return {
+    id: v.id || v.vehicle_id,
+    name: v.name || v.vehicle_id,
+    type: v.type || v.vehicle_type || 'LIGHT_TRUCK',
+    capacity_kg: v.capacity_kg || 1500,
+    fuel_type: v.fuel_type || 'DIESEL',
+    current_lat: v.current_lat ?? 19.0760,
+    current_lng: v.current_lng ?? 72.8777,
+    status: v.status || 'AVAILABLE',
+    fuel_level_pct: v.fuel_level_pct ?? 80,
+    engine_temp_c: v.engine_temp_c ?? 85,
+    mileage_km: v.mileage_km || v.odometer_km || 0,
+    health_status: v.health_status || 'NORMAL',
+    failure_risk_pct: v.failure_risk_pct ?? 20,
+  };
+}
+
+export async function removeVehicle(vehicleId: string): Promise<void> {
+  const res = await fetch(`${API_BASE_URL}/vehicles/${vehicleId}`, {
+    method: 'DELETE',
+    headers: getHeaders(),
+  });
+  if (!res.ok) await parseApiError(res, 'Failed to remove vehicle');
+}
+
+export interface CreateWarehousePayload {
+  name: string;
+  city: string;
+  state?: string;
+  address?: string;
+  location_lat: number;
+  location_lng: number;
+  capacity_sqft?: number;
+}
+
+export async function addWarehouse(payload: CreateWarehousePayload): Promise<WarehouseItem> {
+  const res = await fetch(`${API_BASE_URL}/warehouses`, {
+    method: 'POST',
+    headers: getHeaders({ 'Content-Type': 'application/json' }),
+    body: JSON.stringify(payload),
+  });
+  if (!res.ok) await parseApiError(res, 'Failed to add warehouse');
+  return await res.json();
+}
+
+export async function removeWarehouse(warehouseId: string): Promise<void> {
+  const res = await fetch(`${API_BASE_URL}/warehouses/${warehouseId}`, {
+    method: 'DELETE',
+    headers: getHeaders(),
+  });
+  if (!res.ok) await parseApiError(res, 'Failed to remove warehouse');
+}
+

@@ -3,7 +3,8 @@ import os
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from app.db.session import engine, Base, SessionLocal
-from app.db.models import Role, User, Vehicle, Driver, Warehouse
+from app.db.models import Role, User, Vehicle, Driver, Warehouse, Order
+from app.db.seed_data import DEMO_ORDERS
 from app.core.security.hashing import hash_password
 
 def init_db():
@@ -49,6 +50,10 @@ def init_db():
                 Warehouse(warehouse_id="w3333333-3333-3333-3333-333333333333", warehouse_name="Pune Industrial Fulfillment Hub", address="Chakan MIDC Phase II", city="Pune", state="MH", country="India", latitude=18.5204, longitude=73.8567, storage_capacity_sqft=80000.0, status="ACTIVE")
             ]
             db.add_all(warehouses)
+            db.commit()
+
+        if not db.query(Order).first():
+            db.add_all([Order(**o) for o in DEMO_ORDERS])
             db.commit()
 
         print("Database Seeding Completed Successfully.")

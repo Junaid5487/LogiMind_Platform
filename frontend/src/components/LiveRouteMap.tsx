@@ -1,53 +1,65 @@
 import React, { useEffect, useState } from 'react';
 import type { RouteItem, WarehouseItem, VehicleItem } from '../types';
-import { RefreshCw, Navigation, Fuel, Zap } from 'lucide-react';
+import { RefreshCw, Navigation, Fuel, Zap, CheckCircle2, Route as RouteIcon } from 'lucide-react';
 import { MapContainer, TileLayer, Marker, Popup, Polyline } from 'react-leaflet';
 import L from 'leaflet';
+import 'leaflet/dist/leaflet.css';
+import { SavingsBanner } from './SavingsBanner';
 
 interface LiveRouteMapProps {
   warehouses: WarehouseItem[];
   vehicles: VehicleItem[];
   routes: RouteItem[];
+  defaultRoutes: RouteItem[];
   onOptimize: () => void;
   isOptimizing: boolean;
+  solverEngine?: string;
+  totalDistanceKm?: number;
+  defaultDistanceKm?: number;
+  lastRunAt?: string;
+  optimizedAtLeastOnce: boolean;
+  planner: React.ReactNode;
 }
 
+// Inline SVG pin rendered as a data URI so markers never depend on external
+// CDNs (raw.githubusercontent.com is blocked by Chrome's ORB in some cases).
+const pinDataUrl = (color: string): string =>
+  `data:image/svg+xml,${encodeURIComponent(
+    `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 36"><path d="M12 0C5.373 0 0 5.373 0 12c0 9 12 24 12 24s12-15 12-24c0-6.627-5.373-12-12-12z" fill="${color}" stroke="#ffffff" stroke-width="2"/><circle cx="12" cy="12" r="4.5" fill="#ffffff"/></svg>`
+  )}`;
+
 const warehouseIcon = new L.Icon({
-  iconUrl: 'https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-2x-violet.png',
-  shadowUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/0.7.7/images/marker-shadow.png',
+  iconUrl: pinDataUrl('#a855f7'),
   iconSize: [25, 41],
   iconAnchor: [12, 41],
-  popupAnchor: [1, -34],
-  shadowSize: [41, 41]
+  popupAnchor: [0, -36]
 });
 
 const vehicleIcon = new L.Icon({
-  iconUrl: 'https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-2x-cyan.png',
-  shadowUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/0.7.7/images/marker-shadow.png',
+  iconUrl: pinDataUrl('#22d3ee'),
   iconSize: [25, 41],
   iconAnchor: [12, 41],
-  popupAnchor: [1, -34],
-  shadowSize: [41, 41]
+  popupAnchor: [0, -36]
 });
 
 const stopIcon = new L.Icon({
-  iconUrl: 'https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-2x-green.png',
-  shadowUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/0.7.7/images/marker-shadow.png',
+  iconUrl: pinDataUrl('#22c55e'),
   iconSize: [20, 32],
   iconAnchor: [10, 32],
-  popupAnchor: [1, -28],
-  shadowSize: [32, 32]
+  popupAnchor: [0, -28]
 });
 
 const routeColors = ['#38bdf8', '#34d399', '#a855f7', '#f59e0b', '#ec4899'];
 
-export const LiveRouteMap: React.FC<LiveRouteMapProps> = ({ warehouses, vehicles, routes, onOptimize, isOptimizing }) => {
+export const LiveRouteMap: React.FC<LiveRouteMapProps> = ({ warehouses, vehicles, routes, defaultRoutes, onOptimize, isOptimizing, solverEngine, totalDistanceKm, defaultDistanceKm, lastRunAt, optimizedAtLeastOnce, planner }) => {
   const [selectedRoute, setSelectedRoute] = useState<RouteItem | null>(null);
 
   useEffect(() => {
-    if (routes.length > 0 && !selectedRoute) {
-      setSelectedRoute(routes[0]);
-    }
+    setSelectedRoute((prev) => {
+      if (routes.length === 0) return null;
+      if (prev && routes.some((r) => r.route_id === prev.route_id)) return prev;
+      return routes[0];
+    });
   }, [routes]);
 
   const mapCenter: [number, number] = [19.0760, 72.8777];
@@ -61,8 +73,15 @@ export const LiveRouteMap: React.FC<LiveRouteMapProps> = ({ warehouses, vehicles
             Live Route VRP Map & Dispatch Control
           </h2>
           <p className="text-xs text-gray-400 mt-0.5">
-            Google OR-Tools metaheuristic multi-stop vehicle routing problem with capacity & time window constraints.
+            Clarke-Wright Savings heuristic with 2-Opt local search for multi-stop vehicle routing under capacity constraints.
           </p>
+          {lastRunAt && !isOptimizing && (
+            <p className="text-[11px] text-emerald-400 mt-1 flex items-center gap-1.5">
+              <CheckCircle2 className="w-3.5 h-3.5" />
+              Solver completed at {lastRunAt}
+              {typeof totalDistanceKm === 'number' && <> &mdash; {totalDistanceKm.toFixed(1)} km total</>}
+            </p>
+          )}
         </div>
 
         <button
@@ -71,16 +90,35 @@ export const LiveRouteMap: React.FC<LiveRouteMapProps> = ({ warehouses, vehicles
           className="px-5 py-2.5 rounded-xl bg-gradient-to-r from-sky-500 to-indigo-600 hover:from-sky-400 hover:to-indigo-500 text-white text-xs font-semibold shadow-lg shadow-sky-500/20 transition-all flex items-center gap-2 disabled:opacity-50"
         >
           <RefreshCw className={`w-4 h-4 ${isOptimizing ? 'animate-spin' : ''}`} />
-          <span>{isOptimizing ? 'Solving VRP Metaheuristics...' : 'Re-Run OR-Tools VRP Solver'}</span>
+          <span>{isOptimizing ? 'Re-Solving Routes...' : 'Optimize Route'}</span>
         </button>
+      </div>
+
+      {planner}
+
+      <SavingsBanner defaultKm={defaultDistanceKm} optimizedKm={totalDistanceKm} visible={optimizedAtLeastOnce} />
+
+      <div className="glass-panel p-4 rounded-2xl flex items-center gap-3 text-xs">
+        <div className="w-9 h-9 rounded-xl bg-gradient-to-tr from-gray-500 to-gray-700 flex items-center justify-center shadow-lg shrink-0">
+          <RouteIcon className="w-4 h-4 text-white" />
+        </div>
+        <div className="text-gray-400">
+          <p className="font-semibold text-gray-200">
+            Default baseline route {typeof defaultDistanceKm === 'number' ? <span>— {defaultDistanceKm.toFixed(1)} km</span> : ''}
+          </p>
+          <p className="mt-0.5 flex items-center gap-2 flex-wrap">
+            <span className="inline-block w-8 border-t-2 border-dashed border-gray-400" /> grey dashed = current default
+            <span className="inline-block w-8 border-t-2 border-sky-400 ml-2" /> solid = optimized
+          </p>
+        </div>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         <div className="glass-panel lg:col-span-2 p-2 rounded-2xl h-[560px] relative overflow-hidden border border-gray-800">
-          <MapContainer center={mapCenter} zoom={7} style={{ height: '100%', width: '100%', borderRadius: '0.75rem' }}>
+          <MapContainer center={mapCenter} zoom={7} className="logimind-map" style={{ height: '100%', width: '100%', borderRadius: '0.75rem' }}>
             <TileLayer
-              attribution='&copy; OpenStreetMap'
-              url="https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png"
+              attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+              url="https://tile.openstreetmap.org/{z}/{x}/{y}.png"
             />
 
             {warehouses.filter(wh => typeof wh.location_lat === 'number' && typeof wh.location_lng === 'number' && !isNaN(wh.location_lat) && !isNaN(wh.location_lng)).map((wh) => (
@@ -104,6 +142,25 @@ export const LiveRouteMap: React.FC<LiveRouteMapProps> = ({ warehouses, vehicles
                 </Popup>
               </Marker>
             ))}
+
+            {/* Default baseline polylines (grey dashed, underneath) */}
+            {defaultRoutes.map((route) => {
+              if (!route || !Array.isArray(route.stops) || route.stops.length === 0) return null;
+              const validStops = route.stops.filter((s) => Number.isFinite(s.dest_lat) && Number.isFinite(s.dest_lng));
+              if (validStops.length === 0) return null;
+              let depotPos: [number, number] | null = null;
+              if (warehouses.length > 0) {
+                depotPos = [warehouses[0].location_lat, warehouses[0].location_lng];
+              }
+              const points: [number, number][] = [
+                ...(depotPos ? [depotPos] : []),
+                ...validStops.map((s) => [s.dest_lat, s.dest_lng] as [number, number]),
+                ...(depotPos ? [depotPos] : []),
+              ];
+              return (
+                <Polyline key={`default-${route.route_id}`} positions={points} pathOptions={{ color: '#9ca3af', weight: 3, opacity: 0.65, dashArray: '8, 8' }} />
+              );
+            })}
 
             {routes.map((route, idx) => {
               const color = routeColors[idx % routeColors.length];
@@ -140,10 +197,14 @@ export const LiveRouteMap: React.FC<LiveRouteMapProps> = ({ warehouses, vehicles
           <div className="glass-panel p-4 rounded-2xl">
             <h3 className="text-sm font-bold text-white flex items-center gap-2 mb-2">
               <Zap className="w-4 h-4 text-sky-400" />
-              OR-Tools VRP Solution Summary
+              VRP Solution Summary
             </h3>
             <div className="text-xs text-gray-400 space-y-1">
+              <div>Solver Engine: <span className="font-semibold text-white">{solverEngine || 'Clarke-Wright Savings + 2-Opt'}</span></div>
               <div>Total Active Routes: <span className="font-semibold text-white">{routes.length}</span></div>
+              {typeof totalDistanceKm === 'number' && (
+                <div>Total Distance: <span className="font-semibold text-sky-400">{totalDistanceKm.toFixed(1)} km</span></div>
+              )}
               <div>Estimated Fuel: <span className="font-semibold text-emerald-400">
                 {routes.reduce((acc, r) => acc + r.fuel_estimate_liters, 0).toFixed(1)} Liters
               </span></div>
