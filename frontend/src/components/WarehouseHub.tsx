@@ -310,6 +310,19 @@ export const WarehouseHub: React.FC<WarehouseHubProps> = ({ warehouses, onChange
             </h3>
             <span className="text-xs font-semibold text-amber-300">{currency}{Number(totalCost || 0).toLocaleString('en-IN', { maximumFractionDigits: 2 })} total</span>
           </div>
+          <p className="text-[11px] text-gray-500 flex items-center gap-2 flex-wrap">
+            <span>Engine: {rebalanceData.solver_engine || 'PuLP Linear Programming'}</span>
+            {rebalanceData.status && <span className="text-gray-600">• Status: {rebalanceData.status}</span>}
+          </p>
+          {rebalanceData.status === 'FALLBACK_HEURISTIC' && (
+            <p className="text-[11px] text-amber-400/90 bg-amber-500/10 border border-amber-500/30 rounded-lg px-3 py-2 flex items-start gap-2">
+              <AlertTriangle className="w-3.5 h-3.5 mt-0.5 shrink-0" />
+              <span>
+                PuLP CBC solver unavailable in this environment - showing heuristic transfers instead.
+                {rebalanceData.solver_error ? ` (${rebalanceData.solver_error})` : ''}
+              </span>
+            </p>
+          )}
           {(rebalanceData.recommendations || []).length === 0 ? (
             <p className="text-xs text-emerald-300 flex items-center gap-2 py-2">
               <CheckCircle2 className="w-4 h-4" /> All warehouses balanced - no transfers needed.

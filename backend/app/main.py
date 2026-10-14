@@ -81,4 +81,13 @@ if os.path.exists(frontend_dist):
 
 @app.on_event("startup")
 def startup_event():
+    # Self-heal the schema: create any missing tables (e.g. inventory_items)
+    # before serving traffic, so a partial/stale database file can never 500
+    # endpoints with "no such table" — locally or in the Render container.
+    try:
+        from app.db.session import engine, Base
+        Base.metadata.create_all(bind=engine)
+        logger.info("Database schema verified/created successfully.")
+    except Exception as exc:
+        logger.error(f"Database schema check failed: {exc}", exc_info=True)
     logger.info(f"=== {settings.PROJECT_NAME} Initialized Successfully ===")

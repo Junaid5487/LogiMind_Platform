@@ -251,7 +251,7 @@ export async function addDriver(payload: CreateDriverPayload): Promise<{ status:
   });
   if (!res.ok) {
     let detail = 'Failed to add driver';
-    try { const err = await res.json(); detail = err.detail || detail; } catch { /* keep default */ }
+    try { const err = await res.json(); detail = err.detail || err.message || detail; } catch { /* keep default */ }
     throw new Error(detail);
   }
   return await res.json();
@@ -315,7 +315,7 @@ export async function addInventoryItem(payload: CreateInventoryItemPayload): Pro
   });
   if (!res.ok) {
     let detail = 'Failed to add inventory item';
-    try { const err = await res.json(); detail = err.detail || detail; } catch { /* keep default */ }
+    try { const err = await res.json(); detail = err.detail || err.message || detail; } catch { /* keep default */ }
     throw new Error(detail);
   }
   return await res.json();
@@ -328,7 +328,7 @@ export async function removeInventoryItem(inventoryId: string): Promise<{ status
   });
   if (!res.ok) {
     let detail = 'Failed to remove inventory item';
-    try { const err = await res.json(); detail = err.detail || detail; } catch { /* keep default */ }
+    try { const err = await res.json(); detail = err.detail || err.message || detail; } catch { /* keep default */ }
     throw new Error(detail);
   }
   return await res.json();
@@ -342,7 +342,7 @@ export async function shiftInventory(payload: ShiftInventoryPayload): Promise<Sh
   });
   if (!res.ok) {
     let detail = 'Failed to shift inventory';
-    try { const err = await res.json(); detail = err.detail || detail; } catch { /* keep default */ }
+    try { const err = await res.json(); detail = err.detail || err.message || detail; } catch { /* keep default */ }
     throw new Error(detail);
   }
   return await res.json();
@@ -350,7 +350,7 @@ export async function shiftInventory(payload: ShiftInventoryPayload): Promise<Sh
 
 async function parseApiError(res: Response, fallback: string): Promise<never> {
   let detail = fallback;
-  try { const err = await res.json(); detail = err.detail || detail; } catch { /* keep default */ }
+  try { const err = await res.json(); detail = err.detail || err.message || detail; } catch { /* keep default */ }
   throw new Error(detail);
 }
 

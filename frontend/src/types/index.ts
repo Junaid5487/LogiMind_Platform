@@ -157,6 +157,7 @@ export interface RebalanceResult {
   currency?: string;
   solver_engine?: string;
   status?: string;
+  solver_error?: string;
 }
 
 export interface VehicleItem {

@@ -1,4 +1,5 @@
 from typing import List, Dict, Any
+from app.core.logging import logger
 from app.services.optimization.vrp_solver import haversine_distance_km
 
 class InventoryLPOptimizer:
@@ -12,13 +13,33 @@ class InventoryLPOptimizer:
 
     def optimize_rebalance(self) -> Dict[str, Any]:
         try:
-            import pulp
-            return self._solve_pulp()
-        except ImportError:
+            import pulp  # noqa: F401
+        except Exception as exc:
+            # ImportError (not installed) or a broken wheel install — degrade
+            # to the pure-Python heuristic instead of failing the request.
+            logger.warning(f"LP rebalance: PuLP unavailable ({exc}); using heuristic solver.")
             return self._solve_heuristic()
+        try:
+            return self._solve_pulp()
+        except Exception as exc:
+            # The CBC binary bundled with PuLP can fail to execute inside slim
+            # Docker images (missing +x / exec format error), which used to
+            # 500 the endpoint on Render. Degrade to the heuristic and surface
+            # the exact reason so the API/Render logs show what happened.
+            logger.error(f"LP rebalance: PuLP solver failed ({exc}); falling back to heuristic.", exc_info=True)
+            result = self._solve_heuristic()
+            result["status"] = "FALLBACK_HEURISTIC"
+            result["solver_error"] = str(exc)
+            return result
 
     def _solve_pulp(self) -> Dict[str, Any]:
         import pulp
+
+        # Fail fast with a clear message if the bundled CBC binary cannot run
+        # in this environment (checked before building any model).
+        available = pulp.listSolvers(onlyAvailable=True)
+        if "PULP_CBC_CMD" not in available:
+            raise RuntimeError(f"CBC solver not available in this environment (available solvers: {available})")
 
         recommendations = []
         total_transfer_cost = 0.0
