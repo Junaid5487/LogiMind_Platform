@@ -1,0 +1,250 @@
+{
+  "instance": "A-n32-k5",
+  "fleet_seed": 101,
+  "risk_scores": [
+    0.043,
+    0.0,
+    0.1033,
+    0.012,
+    0.4587,
+    0.0214,
+    0.3243,
+    0.9904,
+    0.0041,
+    0.9686,
+    0.0061,
+    0.0743,
+    0.0036,
+    0.0216,
+    0.0
+  ],
+  "methods": {
+    "baseline": [
+      {
+        "stops": [
+          16,
+          7,
+          13,
+          1,
+          12
+        ],
+        "vehicle_idx": 10,
+        "vehicle_risk": 0.0061,
+        "distance": 111.9,
+        "exposure": 0.681
+      },
+      {
+        "stops": [
+          23,
+          2,
+          3,
+          17,
+          19,
+          31,
+          21
+        ],
+        "vehicle_idx": 11,
+        "vehicle_risk": 0.0743,
+        "distance": 213.2,
+        "exposure": 15.839
+      },
+      {
+        "stops": [
+          26,
+          6,
+          18,
+          28,
+          4,
+          11,
+          8,
+          9,
+          22,
+          14
+        ],
+        "vehicle_idx": 6,
+        "vehicle_risk": 0.3243,
+        "distance": 257.9,
+        "exposure": 83.648
+      },
+      {
+        "stops": [
+          20,
+          5,
+          25,
+          10,
+          15,
+          29,
+          27
+        ],
+        "vehicle_idx": 14,
+        "vehicle_risk": 0.0,
+        "distance": 195.0,
+        "exposure": 0.0
+      },
+      {
+        "stops": [
+          24,
+          30
+        ],
+        "vehicle_idx": 2,
+        "vehicle_risk": 0.1033,
+        "distance": 65.6,
+        "exposure": 6.78
+      }
+    ],
+    "assign_aware": [
+      {
+        "stops": [
+          16,
+          7,
+          13,
+          1,
+          12
+        ],
+        "vehicle_idx": 8,
+        "vehicle_risk": 0.0041,
+        "distance": 111.9,
+        "exposure": 0.458
+      },
+      {
+        "stops": [
+          23,
+          2,
+          3,
+          17,
+          19,
+          31,
+          21
+        ],
+        "vehicle_idx": 14,
+        "vehicle_risk": 0.0,
+        "distance": 213.2,
+        "exposure": 0.0
+      },
+      {
+        "stops": [
+          26,
+          6,
+          18,
+          28,
+          4,
+          11,
+          8,
+          9,
+          22,
+          14
+        ],
+        "vehicle_idx": 1,
+        "vehicle_risk": 0.0,
+        "distance": 257.9,
+        "exposure": 0.0
+      },
+      {
+        "stops": [
+          20,
+          5,
+          25,
+          10,
+          15,
+          29,
+          27
+        ],
+        "vehicle_idx": 12,
+        "vehicle_risk": 0.0036,
+        "distance": 195.0,
+        "exposure": 0.703
+      },
+      {
+        "stops": [
+          24,
+          30
+        ],
+        "vehicle_idx": 10,
+        "vehicle_risk": 0.0061,
+        "distance": 65.6,
+        "exposure": 0.399
+      }
+    ],
+    "ours_lam1.0": [
+      {
+        "stops": [
+          1,
+          7,
+          23,
+          2,
+          3,
+          6
+        ],
+        "vehicle_idx": 12,
+        "vehicle_risk": 0.0036,
+        "distance": 187.3,
+        "exposure": 0.675
+      },
+      {
+        "stops": [
+          14,
+          18,
+          28,
+          4,
+          11,
+          8,
+          9,
+          22
+        ],
+        "vehicle_idx": 14,
+        "vehicle_risk": 0.0,
+        "distance": 240.0,
+        "exposure": 0.0
+      },
+      {
+        "stops": [
+          20,
+          5,
+          25,
+          10,
+          15,
+          29
+        ],
+        "vehicle_idx": 1,
+        "vehicle_risk": 0.0,
+        "distance": 194.4,
+        "exposure": 0.0
+      },
+      {
+        "stops": [
+          12,
+          16,
+          30
+        ],
+        "vehicle_idx": 10,
+        "vehicle_risk": 0.0061,
+        "distance": 64.7,
+        "exposure": 0.394
+      },
+      {
+        "stops": [
+          26,
+          13,
+          17,
+          19,
+          31,
+          21
+        ],
+        "vehicle_idx": 8,
+        "vehicle_risk": 0.0041,
+        "distance": 156.1,
+        "exposure": 0.638
+      },
+      {
+        "stops": [
+          24,
+          27
+        ],
+        "vehicle_idx": 3,
+        "vehicle_risk": 0.012,
+        "distance": 59.3,
+        "exposure": 0.712
+      }
+    ]
+  }
+}

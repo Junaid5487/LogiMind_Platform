@@ -32,6 +32,20 @@ class VRPOptimizer:
         depot = self.warehouses[0] if self.warehouses else {"lat": 19.0760, "lng": 72.8777}
         depot_lat = depot.get("lat") or depot.get("location_lat", 19.0760)
         depot_lng = depot.get("lng") or depot.get("location_lng", 72.8777)
+        # Human-readable depot (start) location for the VRP summary cards.
+        depot_name = depot.get("name") or "Mumbai Central Logistics Hub"
+        depot_city = depot.get("city") or "Mumbai"
+        depot_state = depot.get("state") or "MH"
+        depot_address = depot.get("address") or "Bhiwandi Logistics Park, NH 160"
+        start_location = {
+            "name": depot_name,
+            "city": depot_city,
+            "state": depot_state,
+            "address": depot_address,
+            "lat": depot_lat,
+            "lng": depot_lng,
+            "label": f"{depot_name}, {depot_city}" + (f" ({depot_state})" if depot_state else ""),
+        }
 
         num_orders = len(self.orders)
         if num_orders == 0:
@@ -136,6 +150,18 @@ class VRPOptimizer:
                     fuel_mult = 0.15 if v_obj.get("fuel_type") == "ELECTRIC" else 0.28
                     target_route["fuel_estimate_liters"] = round(target_route["total_distance_km"] * fuel_mult, 1)
                     target_route["carbon_emissions_kg"] = round(target_route["fuel_estimate_liters"] * (0.0 if v_obj.get("fuel_type") == "ELECTRIC" else 2.68), 1)
+                    # Refresh end location after overflow stops were appended.
+                    if target_route["stops"]:
+                        last = target_route["stops"][-1]
+                        target_route["end_location"] = {
+                            "name": last.get("customer_name", "Customer"),
+                            "order_id": last.get("order_id"),
+                            "lat": last.get("dest_lat"),
+                            "lng": last.get("dest_lng"),
+                            "eta": last.get("eta"),
+                            "sequence": last.get("sequence"),
+                            "label": f"{last.get('customer_name', 'Customer')} ({last.get('order_id', '')})".strip(),
+                        }
                 continue
 
             v_obj = self.active_vehicles[v_idx]
@@ -168,6 +194,7 @@ class VRPOptimizer:
             fuel_liters = round(dist_km * fuel_multiplier, 1)
             carbon_kg = round(fuel_liters * (0.0 if v_obj.get("fuel_type") == "ELECTRIC" else 2.68), 1)
 
+            last_stop = route_stops[-1] if route_stops else None
             assigned_routes.append({
                 "route_id": f"RT-{v_obj['id']}-OPT",
                 "vehicle_id": v_obj["id"],
@@ -177,7 +204,17 @@ class VRPOptimizer:
                 "fuel_estimate_liters": fuel_liters,
                 "carbon_emissions_kg": carbon_kg,
                 "stops": route_stops,
-                "status": "OPTIMIZED"
+                "status": "OPTIMIZED",
+                "start_location": dict(start_location),
+                "end_location": {
+                    "name": last_stop.get("customer_name", "Customer") if last_stop else None,
+                    "order_id": last_stop.get("order_id") if last_stop else None,
+                    "lat": last_stop.get("dest_lat") if last_stop else None,
+                    "lng": last_stop.get("dest_lng") if last_stop else None,
+                    "eta": last_stop.get("eta") if last_stop else None,
+                    "sequence": last_stop.get("sequence") if last_stop else None,
+                    "label": f"{last_stop.get('customer_name', 'Customer')} ({last_stop.get('order_id', '')})".strip() if last_stop else None,
+                } if last_stop else None,
             })
             total_dist_km += dist_km
 

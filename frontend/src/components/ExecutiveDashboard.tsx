@@ -1,9 +1,14 @@
-import type { DashboardKPIs } from '../types';
-import { TrendingUp, Clock, Truck, Warehouse, DollarSign, ShieldAlert, ArrowUpRight } from 'lucide-react';
+import type { DashboardKPIs, VehicleItem } from '../types';
+import { TrendingUp, Clock, Truck, Warehouse, DollarSign, ShieldAlert, ArrowUpRight, Navigation } from 'lucide-react';
 import { ResponsiveContainer, AreaChart, Area, XAxis, YAxis, Tooltip, CartesianGrid, BarChart, Bar } from 'recharts';
 
 interface ExecutiveDashboardProps {
   kpis: DashboardKPIs | null;
+  vehicles?: VehicleItem[];
+  selectedVehicleId?: string;
+  onSelectVehicle?: (vehicleId: string) => void;
+  onOptimizeVehicle?: (vehicleId: string) => void;
+  isOptimizing?: boolean;
   onNavigate: (tab: string) => void;
 }
 
@@ -23,7 +28,9 @@ const mockFleetDistribution = [
   { type: 'EV Cargo Van', active: 3, maintenance: 1 },
 ];
 
-export const ExecutiveDashboard: React.FC<ExecutiveDashboardProps> = ({ kpis, onNavigate }) => {
+export const ExecutiveDashboard: React.FC<ExecutiveDashboardProps> = ({ kpis, vehicles = [], selectedVehicleId = 'ALL', onSelectVehicle, onOptimizeVehicle, isOptimizing, onNavigate }) => {
+  const activeChoice = selectedVehicleId || 'ALL';
+  const chosenVehicle = vehicles.find((v) => (v.id || (v as any).vehicle_id) === activeChoice);
   return (
     <div className="p-6 space-y-6">
       {/* Header Banner */}
@@ -53,6 +60,57 @@ export const ExecutiveDashboard: React.FC<ExecutiveDashboardProps> = ({ kpis, on
           >
             <span>Run Digital Twin</span>
             <ArrowUpRight className="w-4 h-4" />
+          </button>
+        </div>
+      </div>
+
+      {/* Vehicle selector — pick a vehicle, optimize it, then view its route on the map */}
+      <div className="glass-panel p-5 rounded-2xl border border-emerald-500/20 flex flex-col md:flex-row md:items-center gap-4">
+        <div className="flex items-center gap-3 flex-1">
+          <div className="w-10 h-10 rounded-xl bg-gradient-to-tr from-emerald-500 to-sky-600 flex items-center justify-center shadow-lg shrink-0">
+            <Navigation className="w-5 h-5 text-white" />
+          </div>
+          <div className="flex-1">
+            <h3 className="text-sm font-bold text-white">Per-Vehicle Route Optimizer</h3>
+            <p className="text-xs text-gray-400">
+              {vehicles.length === 0
+                ? 'Loading fleet…'
+                : activeChoice === 'ALL'
+                  ? `Fleet-wide mode — solver splits stops across ${vehicles.length} vehicle${vehicles.length === 1 ? '' : 's'}.`
+                  : chosenVehicle
+                    ? `${chosenVehicle.id} · ${chosenVehicle.name} · ${(chosenVehicle.capacity_kg || 0).toFixed(0)} kg · ${chosenVehicle.status}`
+                    : `Vehicle ${activeChoice} selected.`}
+            </p>
+          </div>
+        </div>
+        <div className="flex items-center gap-2 flex-wrap">
+          <select
+            value={activeChoice}
+            onChange={(e) => onSelectVehicle?.(e.target.value)}
+            className="px-3 py-2 rounded-xl bg-gray-900/80 border border-gray-700 text-xs text-white font-semibold outline-none focus:border-emerald-500/60 min-w-[220px]"
+          >
+            <option value="ALL">All vehicles (fleet optimization)</option>
+            {vehicles.map((v) => {
+              const vid = v.id || (v as any).vehicle_id;
+              return (
+                <option key={vid} value={vid}>
+                  {vid} — {v.name} ({v.status})
+                </option>
+              );
+            })}
+          </select>
+          <button
+            onClick={() => onOptimizeVehicle?.(activeChoice)}
+            disabled={isOptimizing || vehicles.length === 0}
+            className="px-4 py-2 rounded-xl bg-gradient-to-r from-emerald-500 to-sky-600 hover:from-emerald-400 hover:to-sky-500 text-white text-xs font-bold shadow-lg shadow-emerald-500/20 transition-all disabled:opacity-50"
+          >
+            {isOptimizing ? 'Optimizing…' : activeChoice === 'ALL' ? 'Optimize Fleet' : `Optimize ${activeChoice}`}
+          </button>
+          <button
+            onClick={() => onNavigate('routemap')}
+            className="px-4 py-2 rounded-xl bg-sky-500/20 hover:bg-sky-500/30 text-sky-300 text-xs font-semibold border border-sky-500/30 transition-all"
+          >
+            View on Map
           </button>
         </div>
       </div>

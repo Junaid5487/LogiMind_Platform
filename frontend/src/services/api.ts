@@ -1,4 +1,4 @@
-import type { DashboardKPIs, WarehouseItem, VehicleItem, RouteItem, CopilotResponse, SimulationResult, DriverListItem, InventoryItem, ShiftInventoryPayload, ShiftInventoryResult, ScenarioOrder, DefaultRoutesResult } from '../types';
+import type { DashboardKPIs, WarehouseItem, VehicleItem, RouteItem, CopilotResponse, SimulationResult, DriverListItem, InventoryItem, ShiftInventoryPayload, ShiftInventoryResult, ScenarioOrder, DefaultRoutesResult, SkuAvailability, RebalanceResult } from '../types';
 
 const API_BASE_URL = typeof window !== 'undefined' && window.location.origin.includes('5173')
   ? 'http://localhost:8000/api/v1'
@@ -80,64 +80,17 @@ export async function fetchVehicles(): Promise<VehicleItem[]> {
   }
 }
 
-export async function optimizeRoutes(): Promise<{ routes: RouteItem[]; total_distance_km: number; solver_engine: string }> {
-  try {
-    const res = await fetch(`${API_BASE_URL}/routes/optimize`, { method: 'POST', headers: getHeaders() });
-    if (!res.ok) throw new Error('Failed to run VRP optimizer');
-    return await res.json();
-  } catch (e) {
-    return {
-      solver_engine: "Clarke-Wright Savings Algorithm + 2-Opt Local Search",
-      total_distance_km: 142.5,
-      routes: [
-        {
-          route_id: 'RT-V101-OPT',
-          vehicle_id: 'V-101',
-          vehicle_name: 'Tata Prima 5530.S',
-          driver_id: 'DRV-01',
-          total_distance_km: 82.5,
-          fuel_estimate_liters: 23.1,
-          carbon_emissions_kg: 61.9,
-          status: 'OPTIMIZED',
-          stops: [
-            { sequence: 1, order_id: 'ORD-101', customer_name: 'Apex BioMed South Mumbai', dest_lat: 18.9220, dest_lng: 72.8347, eta: '+0h 25m', priority: 'CRITICAL_COLD_CHAIN' },
-            { sequence: 2, order_id: 'ORD-102', customer_name: 'PharmaDist Thane West', dest_lat: 19.2183, dest_lng: 72.9781, eta: '+0h 55m', priority: 'HIGH' }
-          ]
-        },
-        {
-          route_id: 'RT-V102-OPT',
-          vehicle_id: 'V-102',
-          vehicle_name: 'Mahindra Treo Zor EV',
-          driver_id: 'DRV-02',
-          total_distance_km: 60.0,
-          fuel_estimate_liters: 16.8,
-          carbon_emissions_kg: 45.0,
-          status: 'OPTIMIZED',
-          stops: [
-            { sequence: 1, order_id: 'ORD-103', customer_name: 'Reliance Retail Navi Mumbai', dest_lat: 19.0330, dest_lng: 73.0297, eta: '+0h 40m', priority: 'HIGH' },
-            { sequence: 2, order_id: 'ORD-105', customer_name: 'Nashik Regional Cargo Depot', dest_lat: 20.0059, dest_lng: 73.7898, eta: '+1h 45m', priority: 'NORMAL' }
-          ]
-        }
-      ]
-    };
-  }
+export async function optimizeRoutes(vehicleId?: string): Promise<{ routes: RouteItem[]; total_distance_km: number; solver_engine: string }> {
+  const suffix = vehicleId && vehicleId !== 'ALL' ? `?vehicle_id=${encodeURIComponent(vehicleId)}` : '';
+  const res = await fetch(`${API_BASE_URL}/routes/optimize${suffix}`, { method: 'POST', headers: getHeaders() });
+  if (!res.ok) throw new Error('Failed to run VRP optimizer');
+  return await res.json();
 }
 
-export async function rebalanceInventory(): Promise<any> {
-  try {
-    const res = await fetch(`${API_BASE_URL}/inventory/rebalance`, { method: 'POST', headers: getHeaders() });
-    if (!res.ok) throw new Error('Failed to run LP rebalance');
-    return await res.json();
-  } catch (e) {
-    return {
-      status: "OPTIMAL",
-      solver_engine: "PuLP Linear Programming Simplex/CBC Solver",
-      total_transfer_cost_usd: 134.68,
-      recommendations: [
-        { sku: "SKU-ELEC-101", from_warehouse_id: "w1111111-1111-1111-1111-111111111111", from_warehouse_name: "Mumbai Central Logistics Hub", to_warehouse_id: "w2222222-2222-2222-2222-222222222222", to_warehouse_name: "Navi Mumbai Cargo Center", quantity: 48, estimated_cost_usd: 102.61, rationale: "Prevents stockout at Navi Mumbai by shifting surplus from Mumbai Central." }
-      ]
-    };
-  }
+export async function rebalanceInventory(): Promise<RebalanceResult> {
+  const res = await fetch(`${API_BASE_URL}/inventory/rebalance`, { method: 'POST', headers: getHeaders() });
+  if (!res.ok) await parseApiError(res, 'Failed to run LP rebalance');
+  return await res.json();
 }
 
 export async function forecastDemand(warehouseId: string, sku: string, horizonDays: number = 7): Promise<any> {
@@ -313,20 +266,36 @@ export async function removeDriver(driverId: string): Promise<{ status: string; 
   return await res.json();
 }
 
-export async function fetchInventory(): Promise<InventoryItem[]> {
-  try {
-    const res = await fetch(`${API_BASE_URL}/inventory`, { headers: getHeaders() });
-    if (!res.ok) throw new Error('Failed to fetch inventory');
-    return await res.json();
-  } catch (e) {
-    return [
-      { inventory_id: 'INV-01', warehouse_id: 'w1111111-1111-1111-1111-111111111111', sku: 'SKU-ELEC-101', item_name: 'Electronic Components Kit', quantity: 140, reorder_threshold: 30, unit: 'units' },
-      { inventory_id: 'INV-02', warehouse_id: 'w2222222-2222-2222-2222-222222222222', sku: 'SKU-ELEC-101', item_name: 'Electronic Components Kit', quantity: 12, reorder_threshold: 30, unit: 'units' },
-      { inventory_id: 'INV-03', warehouse_id: 'w3333333-3333-3333-3333-333333333333', sku: 'SKU-ELEC-101', item_name: 'Electronic Components Kit', quantity: 55, reorder_threshold: 30, unit: 'units' },
-      { inventory_id: 'INV-04', warehouse_id: 'w1111111-1111-1111-1111-111111111111', sku: 'SKU-PHAR-201', item_name: 'Pharmaceutical Supplies', quantity: 45, reorder_threshold: 15, unit: 'boxes' },
-      { inventory_id: 'INV-05', warehouse_id: 'w2222222-2222-2222-2222-222222222222', sku: 'SKU-PHAR-201', item_name: 'Pharmaceutical Supplies', quantity: 8, reorder_threshold: 15, unit: 'boxes' },
-    ];
-  }
+export async function fetchInventory(warehouseId?: string): Promise<InventoryItem[]> {
+  const qs = warehouseId ? `?warehouse_id=${encodeURIComponent(warehouseId)}` : '';
+  const res = await fetch(`${API_BASE_URL}/inventory${qs}`, { headers: getHeaders() });
+  if (!res.ok) await parseApiError(res, 'Failed to fetch inventory');
+  return await res.json();
+}
+
+export async function fetchSkuAvailability(warehouseId?: string): Promise<SkuAvailability[]> {
+  const qs = warehouseId ? `?warehouse_id=${encodeURIComponent(warehouseId)}` : '';
+  const res = await fetch(`${API_BASE_URL}/inventory/skus${qs}`, { headers: getHeaders() });
+  if (!res.ok) await parseApiError(res, 'Failed to fetch SKU availability');
+  return await res.json();
+}
+
+export interface UpdateInventoryPayload {
+  quantity?: number;
+  reorder_threshold?: number;
+  item_name?: string;
+  unit?: string;
+}
+
+export async function updateInventoryItem(inventoryId: string, payload: UpdateInventoryPayload): Promise<InventoryItem> {
+  const res = await fetch(`${API_BASE_URL}/inventory/${inventoryId}`, {
+    method: 'PATCH',
+    headers: getHeaders({ 'Content-Type': 'application/json' }),
+    body: JSON.stringify(payload),
+  });
+  if (!res.ok) await parseApiError(res, 'Failed to update item');
+  const data = await res.json();
+  return data.item || data;
 }
 
 export interface CreateInventoryItemPayload {

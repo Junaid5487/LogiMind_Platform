@@ -2,9 +2,13 @@ from typing import List, Dict, Any
 from app.services.optimization.vrp_solver import haversine_distance_km
 
 class InventoryLPOptimizer:
-    def __init__(self, warehouses: List[Dict], inventory_data: List[Dict]):
+    def __init__(self, warehouses: List[Dict], inventory_data: List[Dict],
+                 cost_per_km: float = 12.0, currency: str = "₹"):
         self.warehouses = warehouses
         self.inventory_data = inventory_data
+        # Transfer cost model: cost_per_km per unit moved (INR by default).
+        self.cost_per_km = cost_per_km
+        self.currency = currency
 
     def optimize_rebalance(self) -> Dict[str, Any]:
         try:
@@ -44,12 +48,14 @@ class InventoryLPOptimizer:
             vars_dict = pulp.LpVariable.dicts("Transfer", (routes), 0, None, pulp.LpInteger)
 
             cost_matrix = {}
+            dist_matrix = {}
             for s in surplus:
                 for d in deficit:
                     wh_s = wh_dict.get(s["wh_id"], {"location_lat": 19.0760, "location_lng": 72.8777})
                     wh_d = wh_dict.get(d["wh_id"], {"location_lat": 19.0760, "location_lng": 72.8777})
                     dist = haversine_distance_km(wh_s["location_lat"], wh_s["location_lng"], wh_d["location_lat"], wh_d["location_lng"])
-                    cost_matrix[(s["wh_id"], d["wh_id"])] = dist * 0.15
+                    dist_matrix[(s["wh_id"], d["wh_id"])] = round(dist, 1)
+                    cost_matrix[(s["wh_id"], d["wh_id"])] = dist * self.cost_per_km
 
             prob += pulp.lpSum([vars_dict[(s["wh_id"], d["wh_id"])] * cost_matrix[(s["wh_id"], d["wh_id"])] for s in surplus for d in deficit])
 
@@ -76,13 +82,18 @@ class InventoryLPOptimizer:
                             "to_warehouse_id": d["wh_id"],
                             "to_warehouse_name": to_name,
                             "quantity": qty_transferred,
+                            "distance_km": dist_matrix.get((s["wh_id"], d["wh_id"]), 0.0),
+                            "estimated_cost": round(c, 2),
                             "estimated_cost_usd": round(c, 2),
+                            "currency": self.currency,
                             "rationale": f"Prevents stockout at {to_name} by shifting surplus from {from_name}."
                         })
 
         return {
             "recommendations": recommendations,
+            "total_transfer_cost": round(total_transfer_cost, 2),
             "total_transfer_cost_usd": round(total_transfer_cost, 2),
+            "currency": self.currency,
             "solver_engine": "PuLP Linear Programming Simplex/CBC Solver",
             "status": "OPTIMAL"
         }
@@ -117,13 +128,18 @@ class InventoryLPOptimizer:
                             "to_warehouse_id": item["warehouse_id"],
                             "to_warehouse_name": wh_dict.get(item["warehouse_id"], {}).get("name", item["warehouse_id"]),
                             "quantity": qty,
+                            "distance_km": 0.0,
+                            "estimated_cost": round(cost, 2),
                             "estimated_cost_usd": round(cost, 2),
+                            "currency": self.currency,
                             "rationale": f"Heuristic inventory transfer to clear low stock alert."
                         })
 
         return {
             "recommendations": recommendations,
+            "total_transfer_cost": round(total_transfer_cost, 2),
             "total_transfer_cost_usd": round(total_transfer_cost, 2),
+            "currency": self.currency,
             "solver_engine": "Greedy Min-Distance Inventory Heuristic",
             "status": "SUCCESS"
         }

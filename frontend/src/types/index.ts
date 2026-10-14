@@ -125,6 +125,38 @@ export interface WarehouseItem {
   total_skus: number;
   low_stock_count: number;
   status?: string;
+  is_depot?: boolean;
+}
+
+export interface SkuAvailability {
+  sku: string;
+  item_name: string;
+  unit: string;
+  total_quantity: number;
+  warehouses: Array<{ warehouse_id: string; warehouse_name: string; quantity: number }>;
+}
+
+export interface TransferRecommendation {
+  sku: string;
+  from_warehouse_id: string;
+  from_warehouse_name: string;
+  to_warehouse_id: string;
+  to_warehouse_name: string;
+  quantity: number;
+  distance_km?: number;
+  estimated_cost?: number;
+  estimated_cost_usd?: number;
+  currency?: string;
+  rationale?: string;
+}
+
+export interface RebalanceResult {
+  recommendations: TransferRecommendation[];
+  total_transfer_cost?: number;
+  total_transfer_cost_usd?: number;
+  currency?: string;
+  solver_engine?: string;
+  status?: string;
 }
 
 export interface VehicleItem {
@@ -153,6 +185,19 @@ export interface RouteStop {
   priority: string;
 }
 
+export interface RouteLocation {
+  name?: string | null;
+  city?: string | null;
+  state?: string | null;
+  address?: string | null;
+  order_id?: string | null;
+  lat?: number | null;
+  lng?: number | null;
+  eta?: string | null;
+  sequence?: number | null;
+  label?: string | null;
+}
+
 export interface RouteItem {
   route_id: string;
   vehicle_id: string;
@@ -163,6 +208,8 @@ export interface RouteItem {
   carbon_emissions_kg: number;
   stops: RouteStop[];
   status: string;
+  start_location?: RouteLocation | null;
+  end_location?: RouteLocation | null;
 }
 
 export interface CopilotResponse {

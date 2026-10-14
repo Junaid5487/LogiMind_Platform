@@ -74,6 +74,25 @@ class Warehouse(Base):
     storage_capacity_sqft = Column(Float, default=100000.0)
     status = Column(String(20), default="ACTIVE")
 
+# Units of floor space consumed by one inventory unit (sqft/unit). Single
+# capacity model shared by utilization stats and the LP optimizer so the
+# "% fill" bar, SKU counts and rebalance math always agree.
+UNITS_PER_SQFT = 0.02  # ~50 sqft per pallet/unit incl. aisles
+UNITS_PER_SQFT_DEFAULT = UNITS_PER_SQFT
+
+
+class InventoryItem(Base):
+    """Persistent per-warehouse SKU stock row (replaces the legacy in-memory registry)."""
+    __tablename__ = "inventory_items"
+    inventory_id = Column(String(36), primary_key=True, default=generate_uuid)
+    warehouse_id = Column(String(36), ForeignKey("warehouses.warehouse_id"), nullable=False)
+    sku = Column(String(50), nullable=False)
+    item_name = Column(String(150), nullable=False)
+    quantity = Column(Integer, default=0, nullable=False)
+    reorder_threshold = Column(Integer, default=10, nullable=False)
+    unit = Column(String(20), default="units")
+    created_at = Column(DateTime, default=datetime.utcnow)
+
 class Order(Base):
     """Manual scenario order (destination) — mirrors the experiment benchmark
     instance field format (dest_lat/dest_lng/weight_kg/priority)."""

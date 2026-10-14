@@ -37,7 +37,8 @@ function MainApp() {
   const [orders, setOrders] = useState<ScenarioOrder[]>([]);
   const [loadingVrp, setLoadingVrp] = useState<boolean>(false);
   const [optimizedOnce, setOptimizedOnce] = useState<boolean>(false);
-  const [vrpMeta, setVrpMeta] = useState<{ solverEngine?: string; totalDistanceKm?: number; defaultDistanceKm?: number; lastRunAt?: string }>({});
+  const [selectedVehicleId, setSelectedVehicleId] = useState<string>('ALL');
+  const [vrpMeta, setVrpMeta] = useState<{ solverEngine?: string; totalDistanceKm?: number; defaultDistanceKm?: number; lastRunAt?: string; optimizedVehicleId?: string }>({});
 
   const [driverId, setDriverId] = useState<string>('DRV-01');
 
@@ -93,11 +94,13 @@ function MainApp() {
     loadData();
   }, []);
 
-  const handleRunVrpOptimization = async () => {
+  const handleRunVrpOptimization = async (vehicleId?: string) => {
     setLoadingVrp(true);
     const startedAt = Date.now();
+    // Dashboard dropdown and map dropdown share one selection; explicit arg wins.
+    const targetVehicle = vehicleId ?? selectedVehicleId ?? 'ALL';
     try {
-      const vrpRes = await optimizeRoutes();
+      const vrpRes = await optimizeRoutes(targetVehicle);
       setRoutes(vrpRes.routes || []);
       setOptimizedOnce(true);
       setVrpMeta((prev) => ({
@@ -105,7 +108,13 @@ function MainApp() {
         solverEngine: vrpRes.solver_engine,
         totalDistanceKm: vrpRes.total_distance_km,
         lastRunAt: new Date().toLocaleTimeString(),
+        optimizedVehicleId: targetVehicle,
       }));
+      // Jump context: optimizing one vehicle from the dashboard lands you on its map route.
+      if (targetVehicle && targetVehicle !== 'ALL') {
+        setSelectedVehicleId(targetVehicle);
+        setActiveTab('routemap');
+      }
     } catch (e) {
       console.error(e);
     } finally {
@@ -113,6 +122,11 @@ function MainApp() {
       const elapsed = Date.now() - startedAt;
       window.setTimeout(() => setLoadingVrp(false), Math.max(0, 700 - elapsed));
     }
+  };
+
+  const handleOptimizeFromDashboard = async (vehicleId: string) => {
+    setSelectedVehicleId(vehicleId || 'ALL');
+    await handleRunVrpOptimization(vehicleId || 'ALL');
   };
 
   const handleExecuteCopilotAction = (action: string) => {
@@ -150,7 +164,15 @@ function MainApp() {
 
       <main className="flex-1 max-w-7xl w-full mx-auto">
         {activeTab === 'dashboard' && role === 'admin' && (
-          <ExecutiveDashboard kpis={kpis} onNavigate={setActiveTab} />
+          <ExecutiveDashboard
+            kpis={kpis}
+            vehicles={vehicles}
+            selectedVehicleId={selectedVehicleId}
+            onSelectVehicle={setSelectedVehicleId}
+            onOptimizeVehicle={handleOptimizeFromDashboard}
+            isOptimizing={loadingVrp}
+            onNavigate={setActiveTab}
+          />
         )}
 
         {activeTab === 'routemap' && role === 'admin' && (
@@ -166,12 +188,14 @@ function MainApp() {
             defaultDistanceKm={vrpMeta.defaultDistanceKm}
             lastRunAt={vrpMeta.lastRunAt}
             optimizedAtLeastOnce={optimizedOnce}
+            selectedVehicleId={selectedVehicleId}
+            onSelectVehicle={setSelectedVehicleId}
             planner={<ScenarioPlanner orders={orders} warehouses={warehouses} onReload={reloadScenario} />}
           />
         )}
 
         {activeTab === 'warehouse' && role === 'admin' && (
-          <WarehouseHub warehouses={warehouses} />
+          <WarehouseHub warehouses={warehouses} onChanged={reloadScenario} />
         )}
 
         {activeTab === 'fleet' && role === 'admin' && (

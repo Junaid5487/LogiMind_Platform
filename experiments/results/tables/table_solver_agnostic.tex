@@ -1,0 +1,13 @@
+% ortools_aware (ours) vs ortools (ref); medians over paired runs
+\begin{tabular}{lrrrrr}
+\toprule
+Metric & Med. ours & Med. ref & Med. diff & $p$ (Wilcoxon) & $r_{rb}$ \\
+\midrule
+exposure & 1.59 & 81.51 & -79.93 & 0.0000 (***) & -1.000 \\
+mc_cost_mean & 0.99 & 48.56 & -46.88 & 0.0000 (***) & -1.000 \\
+analytic_breakdowns & 0.00 & 0.12 & -0.12 & 0.0000 (***) & -1.000 \\
+distance & 825.25 & 825.25 & 0.00 & 1.0000 (ns) & 0.000 \\
+mc_ontime_frac & 1.00 & 0.99 & 0.01 & 0.0000 (***) & 1.000 \\
+solve_ms & 10000.40 & 10000.38 & 0.01 & 0.0000 (***) & 1.000 \\
+\bottomrule
+\end{tabular}

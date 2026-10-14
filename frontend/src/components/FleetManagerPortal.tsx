@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
-import type { VehicleItem, RouteItem, DriverListItem } from '../types';
-import { fetchDrivers, addDriver, removeDriver, addVehicle, removeVehicle } from '../services/api';
-import { Users, Plus, Trash2, Truck, Navigation, RotateCcw, ShieldCheck, Star, Phone } from 'lucide-react';
+import type { VehicleItem, RouteItem, DriverListItem, RouteLocation, WarehouseItem } from '../types';
+import { fetchDrivers, addDriver, removeDriver, addVehicle, removeVehicle, fetchWarehouses } from '../services/api';
+import { Users, Plus, Trash2, Truck, Navigation, RotateCcw, ShieldCheck, Star, Phone, Flag, CircleDot } from 'lucide-react';
 
 interface FleetManagerPortalProps {
   vehicles: VehicleItem[];
@@ -32,6 +32,7 @@ const EMPTY_FORM = {
 
 export const FleetManagerPortal: React.FC<FleetManagerPortalProps> = ({ vehicles, routes, onOptimize, isOptimizing, onReload }) => {
   const [drivers, setDrivers] = useState<DriverListItem[]>([]);
+  const [warehouses, setWarehouses] = useState<WarehouseItem[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
   const [form, setForm] = useState({ ...EMPTY_FORM });
   const [showForm, setShowForm] = useState<boolean>(false);
@@ -40,7 +41,38 @@ export const FleetManagerPortal: React.FC<FleetManagerPortalProps> = ({ vehicles
   const [fleetBusy, setFleetBusy] = useState<boolean>(false);
   const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
 
-  useEffect(() => { loadDrivers(); }, []);
+  useEffect(() => { loadDrivers(); loadWarehouses(); }, []);
+
+  const loadWarehouses = async () => {
+    try {
+      setWarehouses(await fetchWarehouses());
+    } catch {
+      setWarehouses([]);
+    }
+  };
+
+  /** Start/end text — mirrors LiveRouteMap helpers with a local depot fallback. */
+  const routeStartLabel = (route: RouteItem): string => {
+    const loc: RouteLocation | null | undefined = route.start_location;
+    if (loc?.label) return loc.label;
+    if (loc?.name) return `${loc.name}${loc.city ? `, ${loc.city}` : ''}${loc.state ? ` (${loc.state})` : ''}`;
+    const depot = warehouses[0];
+    if (depot) return `${depot.name}, ${depot.city}${depot.state ? ` (${depot.state})` : ''}`;
+    return 'Depot origin';
+  };
+
+  const routeEndLabel = (route: RouteItem): string => {
+    const loc: RouteLocation | null | undefined = route.end_location;
+    if (loc?.label) return loc.label;
+    if (loc?.name) return loc.order_id ? `${loc.name} (${loc.order_id})` : loc.name;
+    const stops = route.stops || [];
+    const last = stops[stops.length - 1];
+    if (last) {
+      const oid = (last as { order_id?: string }).order_id;
+      return oid ? `${last.customer_name} (${oid})` : last.customer_name;
+    }
+    return 'No stops assigned';
+  };
 
   const loadDrivers = async () => {
     setLoading(true);
@@ -297,17 +329,29 @@ export const FleetManagerPortal: React.FC<FleetManagerPortalProps> = ({ vehicles
             <p className="text-xs text-gray-500">No optimized routes yet. Click "Run VRP Optimization".</p>
           )}
           {routes.map(r => (
-            <div key={r.route_id} className="bg-gray-900/40 border border-gray-800 rounded-xl p-3 flex flex-wrap items-center justify-between gap-2">
-              <div className="flex items-center gap-3">
-                <div className="w-7 h-7 rounded-lg bg-sky-500/20 text-sky-400 flex items-center justify-center text-[10px] font-bold">
+            <div key={r.route_id} className="bg-gray-900/40 border border-gray-800 rounded-xl p-3 flex flex-wrap items-start justify-between gap-2">
+              <div className="flex items-start gap-3 min-w-0">
+                <div className="w-7 h-7 rounded-lg bg-sky-500/20 text-sky-400 flex items-center justify-center text-[10px] font-bold shrink-0 mt-0.5">
                   {r.stops.length}
                 </div>
-                <div>
+                <div className="min-w-0">
                   <p className="text-xs font-bold text-white">{r.route_id} <span className="text-gray-500 font-normal">({r.vehicle_name})</span></p>
                   <p className="text-[10px] text-gray-400">Driver {r.driver_id} | {r.total_distance_km} km | {r.fuel_estimate_liters} L fuel | {r.carbon_emissions_kg} kg CO2</p>
+                  <div className="mt-1.5 space-y-1 rounded-lg bg-gray-950/60 border border-gray-800/80 px-2 py-1.5">
+                    <p className="flex items-start gap-1.5 text-[10px] leading-snug">
+                      <Flag className="w-3 h-3 text-emerald-400 shrink-0 mt-px" />
+                      <span className="text-gray-500 font-semibold shrink-0">Start:</span>
+                      <span className="text-gray-200 font-medium break-words">{routeStartLabel(r)}</span>
+                    </p>
+                    <p className="flex items-start gap-1.5 text-[10px] leading-snug">
+                      <CircleDot className="w-3 h-3 text-red-400 shrink-0 mt-px" />
+                      <span className="text-gray-500 font-semibold shrink-0">End:</span>
+                      <span className="text-gray-200 font-medium break-words">{routeEndLabel(r)}</span>
+                    </p>
+                  </div>
                 </div>
               </div>
-              <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">{r.status}</span>
+              <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 shrink-0">{r.status}</span>
             </div>
           ))}
         </div>

@@ -3,8 +3,8 @@ import os
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from app.db.session import engine, Base, SessionLocal
-from app.db.models import Role, User, Vehicle, Driver, Warehouse, Order
-from app.db.seed_data import DEMO_ORDERS
+from app.db.models import Role, User, Vehicle, Driver, Warehouse, Order, InventoryItem
+from app.db.seed_data import DEMO_ORDERS, WAREHOUSE_SEEDS, VEHICLE_SEEDS, INVENTORY_SEEDS
 from app.core.security.hashing import hash_password
 
 def init_db():
@@ -34,26 +34,38 @@ def init_db():
             db.add(admin_user)
             db.commit()
 
-        if not db.query(Vehicle).first():
-            vehicles = [
-                Vehicle(vehicle_id="V-101", registration_number="NY-TRK-101", vehicle_type="HEAVY_TRUCK", brand="Freightliner", model="M2 106", manufacturing_year=2022, capacity_kg=5000.0, fuel_type="DIESEL", status="AVAILABLE", odometer_km=62000.0),
-                Vehicle(vehicle_id="V-102", registration_number="NJ-VAN-102", vehicle_type="EV_VAN", brand="Mercedes-Benz", model="eSprinter", manufacturing_year=2023, capacity_kg=1800.0, fuel_type="ELECTRIC", status="IN_TRANSIT", odometer_km=18500.0),
-                Vehicle(vehicle_id="V-104", registration_number="PA-TRK-104", vehicle_type="EV_VAN", brand="Ford", model="E-Transit", manufacturing_year=2023, capacity_kg=1500.0, fuel_type="ELECTRIC", status="MAINTENANCE", odometer_km=31000.0)
-            ]
-            db.add_all(vehicles)
-            db.commit()
+        # Upsert vehicles so dataset refreshes apply on re-seed
+        # (old Mumbai-cluster rows are replaced by the new spread-out seeds).
+        for v_seed in VEHICLE_SEEDS:
+            existing = db.query(Vehicle).filter(Vehicle.vehicle_id == v_seed["vehicle_id"]).first()
+            if existing:
+                for k, val in v_seed.items():
+                    setattr(existing, k, val)
+            else:
+                db.add(Vehicle(**v_seed))
+        # Drop legacy demo vehicles not in the new seed set.
+        db.query(Vehicle).filter(~Vehicle.vehicle_id.in_([v["vehicle_id"] for v in VEHICLE_SEEDS])).delete(synchronize_session=False)
+        db.commit()
 
-        if not db.query(Warehouse).first():
-            warehouses = [
-                Warehouse(warehouse_id="w1111111-1111-1111-1111-111111111111", warehouse_name="Mumbai Central Logistics Hub", address="Bhiwandi Logistics Park, NH 160", city="Mumbai", state="MH", country="India", latitude=19.0760, longitude=72.8777, storage_capacity_sqft=120000.0, status="ACTIVE"),
-                Warehouse(warehouse_id="w2222222-2222-2222-2222-222222222222", warehouse_name="Navi Mumbai Cargo Distribution Center", address="JNPT Port Expressway", city="Navi Mumbai", state="MH", country="India", latitude=19.0330, longitude=73.0297, storage_capacity_sqft=95000.0, status="ACTIVE"),
-                Warehouse(warehouse_id="w3333333-3333-3333-3333-333333333333", warehouse_name="Pune Industrial Fulfillment Hub", address="Chakan MIDC Phase II", city="Pune", state="MH", country="India", latitude=18.5204, longitude=73.8567, storage_capacity_sqft=80000.0, status="ACTIVE")
-            ]
-            db.add_all(warehouses)
-            db.commit()
+        # Upsert warehouses (Mumbai hub stays depot = first row; others move to
+        # Delhi / Bengaluru so hubs are spread across the country).
+        for w_seed in WAREHOUSE_SEEDS:
+            existing = db.query(Warehouse).filter(Warehouse.warehouse_id == w_seed["warehouse_id"]).first()
+            if existing:
+                for k, val in w_seed.items():
+                    setattr(existing, k, val)
+            else:
+                db.add(Warehouse(**w_seed))
+        db.commit()
 
-        if not db.query(Order).first():
-            db.add_all([Order(**o) for o in DEMO_ORDERS])
+        # Refresh demo orders: wipe old cluster + insert the 8 spread-out orders.
+        db.query(Order).delete()
+        db.add_all([Order(**o) for o in DEMO_ORDERS])
+        db.commit()
+
+        # Seed persistent inventory rows once (preserve manager edits on re-seed).
+        if db.query(InventoryItem).count() == 0:
+            db.add_all([InventoryItem(**row) for row in INVENTORY_SEEDS])
             db.commit()
 
         print("Database Seeding Completed Successfully.")

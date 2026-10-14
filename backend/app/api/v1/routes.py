@@ -1,5 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 from sqlalchemy.orm import Session
 from app.dependencies.database import get_db_session
 from app.db.models import Vehicle, Order, Warehouse
@@ -18,7 +18,8 @@ def _load_scenario(db: Session):
     vehicles are excluded from dispatch (solver behavior, unchanged).
     """
     warehouses = [
-        {"id": w.warehouse_id, "name": w.warehouse_name, "lat": w.latitude, "lng": w.longitude}
+        {"id": w.warehouse_id, "name": w.warehouse_name, "lat": w.latitude, "lng": w.longitude,
+         "city": w.city, "state": w.state, "address": w.address}
         for w in sort_warehouses(db.query(Warehouse).all())
     ]
     orders = [
@@ -36,22 +37,45 @@ def _load_scenario(db: Session):
 
 
 @router.get("/default", response_model=Dict[str, Any])
-def default_routes(strategy: str = "nearest_neighbor", db: Session = Depends(get_db_session)):
-    """Naive baseline route for the current scenario (grey dashed polyline in the UI)."""
+def default_routes(
+    strategy: str = "nearest_neighbor",
+    vehicle_id: Optional[str] = None,
+    db: Session = Depends(get_db_session),
+):
+    """Naive baseline route for the current scenario (grey dashed polyline in the UI).
+
+    Pass ``vehicle_id`` to build the baseline for a single vehicle only.
+    """
     if strategy not in STRATEGY_LABELS:
         raise HTTPException(status_code=400, detail=f"Unknown strategy '{strategy}'. Use: {', '.join(STRATEGY_LABELS)}.")
     warehouses, orders, vehicles = _load_scenario(db)
+    if vehicle_id:
+        vehicles = [v for v in vehicles if v.get("id") == vehicle_id]
+        if not vehicles:
+            raise HTTPException(status_code=404, detail=f"Vehicle {vehicle_id} not found.")
     return build_default_routes(warehouses=warehouses, orders=orders, vehicles=vehicles, strategy=strategy)
 
 
 @router.post("/optimize", response_model=Dict[str, Any])
-def optimize_fleet_routes(db: Session = Depends(get_db_session)):
+def optimize_fleet_routes(
+    vehicle_id: Optional[str] = None,
+    db: Session = Depends(get_db_session),
+):
     """
     Executes the Clarke-Wright Savings heuristic with 2-Opt local search improvement
     to solve the multi-stop vehicle routing problem under capacity constraints.
     Reads the live scenario store (orders/warehouses/vehicles) instead of hardcoded data.
+
+    Pass ``vehicle_id`` (e.g. ``?vehicle_id=V-101``) to optimize a single vehicle's
+    tour only — the solver runs with just that vehicle so the map can show one
+    differentiated route per vehicle.
     """
     warehouses, orders, vehicles = _load_scenario(db)
+
+    if vehicle_id:
+        vehicles = [v for v in vehicles if v.get("id") == vehicle_id]
+        if not vehicles:
+            raise HTTPException(status_code=404, detail=f"Vehicle {vehicle_id} not found.")
 
     if not orders:
         return {

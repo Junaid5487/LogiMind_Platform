@@ -1,0 +1,39 @@
+{
+  "instances": [
+    "A-n32-k5",
+    "A-n33-k5",
+    "A-n33-k6",
+    "A-n34-k5",
+    "A-n36-k5",
+    "A-n38-k5",
+    "A-n39-k5",
+    "A-n45-k6",
+    "A-n48-k7",
+    "A-n53-k7",
+    "A-n60-k9",
+    "A-n80-k10"
+  ],
+  "fleet_seeds": [
+    101,
+    202,
+    303,
+    404,
+    505
+  ],
+  "lambda_sweep": [
+    0.0,
+    0.25,
+    0.5,
+    1.0,
+    2.0,
+    4.0
+  ],
+  "primary_lambda": 1.0,
+  "mc_trials": 2000,
+  "hazard_gamma": 0.0015,
+  "risk_noise_sigma": 0.3,
+  "ortools_time_limit_s": 10,
+  "spare_vehicles": 10,
+  "python": "3.13.15",
+  "elapsed_s": 124.0
+}

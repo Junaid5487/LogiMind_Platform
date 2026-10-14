@@ -1,7 +1,7 @@
-import React, { useEffect, useState } from 'react';
-import type { RouteItem, WarehouseItem, VehicleItem } from '../types';
-import { RefreshCw, Navigation, Fuel, Zap, CheckCircle2, Route as RouteIcon } from 'lucide-react';
-import { MapContainer, TileLayer, Marker, Popup, Polyline } from 'react-leaflet';
+import React, { useEffect, useMemo, useState } from 'react';
+import type { RouteItem, RouteLocation, WarehouseItem, VehicleItem } from '../types';
+import { RefreshCw, Navigation, Zap, CheckCircle2, Route as RouteIcon, MapPin, Flag, CircleDot } from 'lucide-react';
+import { MapContainer, TileLayer, Marker, Popup, Polyline, useMap } from 'react-leaflet';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import { SavingsBanner } from './SavingsBanner';
@@ -11,13 +11,15 @@ interface LiveRouteMapProps {
   vehicles: VehicleItem[];
   routes: RouteItem[];
   defaultRoutes: RouteItem[];
-  onOptimize: () => void;
+  onOptimize: (vehicleId?: string) => void;
   isOptimizing: boolean;
   solverEngine?: string;
   totalDistanceKm?: number;
   defaultDistanceKm?: number;
   lastRunAt?: string;
   optimizedAtLeastOnce: boolean;
+  selectedVehicleId?: string;
+  onSelectVehicle?: (vehicleId: string) => void;
   planner: React.ReactNode;
 }
 
@@ -42,27 +44,178 @@ const vehicleIcon = new L.Icon({
   popupAnchor: [0, -36]
 });
 
-const stopIcon = new L.Icon({
-  iconUrl: pinDataUrl('#22c55e'),
-  iconSize: [20, 32],
-  iconAnchor: [10, 32],
-  popupAnchor: [0, -28]
-});
+// Green = trip start (vehicle / depot), Red = trip end (final drop).
+// Bigger pins with a white ring + label badge so start/end are unmistakable.
+const endpointIcon = (color: string, label: string): L.DivIcon =>
+  new L.DivIcon({
+    className: 'logimind-endpoint-pin',
+    html: `<div style="position:relative;width:38px;height:48px;filter:drop-shadow(0 4px 8px rgba(0,0,0,.55))">
+      <svg viewBox="0 0 24 36" width="38" height="48"><path d="M12 0C5.373 0 0 5.373 0 12c0 9 12 24 12 24s12-15 12-24c0-6.627-5.373-12-12-12z" fill="${color}" stroke="#ffffff" stroke-width="2"/><circle cx="12" cy="12" r="5" fill="#ffffff"/><text x="12" y="15.5" text-anchor="middle" font-size="9" font-weight="900" fill="${color}" font-family="Arial,sans-serif">${label}</text></svg>
+    </div>`,
+    iconSize: [38, 48],
+    iconAnchor: [19, 48],
+    popupAnchor: [0, -44],
+  });
+
+const startIcon = endpointIcon('#16a34a', 'S');
+const endIcon = endpointIcon('#dc2626', 'E');
+
+// Small numbered dot for intermediate stops (no more identical green pins everywhere).
+const numberedStopIcon = (n: number): L.DivIcon =>
+  new L.DivIcon({
+    className: 'logimind-stop-dot',
+    html: `<div style="width:26px;height:26px;border-radius:9999px;background:#0ea5e9;border:2px solid #fff;display:flex;align-items:center;justify-content:center;color:#fff;font-size:11px;font-weight:800;box-shadow:0 2px 8px rgba(0,0,0,.5)">${n}</div>`,
+    iconSize: [26, 26],
+    iconAnchor: [13, 13],
+    popupAnchor: [0, -12],
+  });
 
 const routeColors = ['#38bdf8', '#34d399', '#a855f7', '#f59e0b', '#ec4899'];
 
-export const LiveRouteMap: React.FC<LiveRouteMapProps> = ({ warehouses, vehicles, routes, defaultRoutes, onOptimize, isOptimizing, solverEngine, totalDistanceKm, defaultDistanceKm, lastRunAt, optimizedAtLeastOnce, planner }) => {
+type LatLng = [number, number];
+
+/** Human-readable start/end text for a route card.
+ *  Prefers backend start_location/end_location; derives from depot + last
+ *  stop so even stale/cached routes render meaningful text. */
+export function routeStartText(route: RouteItem, warehouses: WarehouseItem[]): string {
+  const loc: RouteLocation | null | undefined = route.start_location;
+  if (loc?.label) return loc.label;
+  if (loc?.name) {
+    const city = loc.city ? `, ${loc.city}` : '';
+    const state = loc.state ? ` (${loc.state})` : '';
+    return `${loc.name}${city}${state}`;
+  }
+  const depot = warehouses[0];
+  if (depot) {
+    const state = depot.state ? ` (${depot.state})` : '';
+    return `${depot.name}, ${depot.city}${state}`;
+  }
+  return 'Depot origin';
+}
+
+export function routeEndText(route: RouteItem): string {
+  const loc: RouteLocation | null | undefined = route.end_location;
+  if (loc?.label) return loc.label;
+  if (loc?.name) {
+    return loc.order_id ? `${loc.name} (${loc.order_id})` : loc.name;
+  }
+  const stops = route.stops || [];
+  const last = stops[stops.length - 1];
+  if (last) {
+    const oid = (last as { order_id?: string }).order_id;
+    return oid ? `${last.customer_name} (${oid})` : last.customer_name;
+  }
+  return 'No stops assigned';
+}
+
+/** Snap a straight depot→stops line onto real roads via OSRM (free, no key).
+ *  Falls back to the straight line if the service is unreachable. */
+async function fetchRoadGeometry(points: LatLng[]): Promise<LatLng[]> {
+  if (points.length < 2) return points;
+  const coords = points.map(([lat, lng]) => `${lng},${lat}`).join(';');
+  const url = `https://router.project-osrm.org/route/v1/driving/${coords}?overview=full&geometries=geojson`;
+  const res = await fetch(url);
+  if (!res.ok) throw new Error(`OSRM ${res.status}`);
+  const data = await res.json();
+  const geom = data?.routes?.[0]?.geometry?.coordinates as Array<[number, number]> | undefined;
+  if (!geom || geom.length < 2) throw new Error('OSRM empty geometry');
+  return geom.map(([lng, lat]) => [lat, lng] as LatLng);
+}
+
+/** Auto-zoom the map to the focused route. */
+const FitRouteBounds: React.FC<{ points: LatLng[] }> = ({ points }) => {
+  const map = useMap();
+  useEffect(() => {
+    if (points.length >= 2) {
+      map.fitBounds(L.latLngBounds(points.map(([lat, lng]) => [lat, lng] as [number, number])), { padding: [36, 36] });
+    }
+  }, [map, points.join('|')]);
+  return null;
+};
+
+export const LiveRouteMap: React.FC<LiveRouteMapProps> = ({ warehouses, vehicles, routes, defaultRoutes, onOptimize, isOptimizing, solverEngine, totalDistanceKm, defaultDistanceKm, lastRunAt, optimizedAtLeastOnce, selectedVehicleId = 'ALL', onSelectVehicle, planner }) => {
   const [selectedRoute, setSelectedRoute] = useState<RouteItem | null>(null);
+
+  const activeVehicle = selectedVehicleId && selectedVehicleId !== 'ALL' ? selectedVehicleId : 'ALL';
+  // When a single vehicle is picked, spotlight only its route(s) + marker on the map.
+  const visibleRoutes = activeVehicle === 'ALL' ? routes : routes.filter((r) => r.vehicle_id === activeVehicle);
+  const visibleDefaultRoutes = activeVehicle === 'ALL' ? defaultRoutes : defaultRoutes.filter((r) => r.vehicle_id === activeVehicle);
+  const visibleVehicles = activeVehicle === 'ALL' ? vehicles : vehicles.filter((v) => (v.id || (v as any).vehicle_id) === activeVehicle);
 
   useEffect(() => {
     setSelectedRoute((prev) => {
-      if (routes.length === 0) return null;
-      if (prev && routes.some((r) => r.route_id === prev.route_id)) return prev;
-      return routes[0];
+      if (visibleRoutes.length === 0) return null;
+      if (prev && visibleRoutes.some((r) => r.route_id === prev.route_id)) return prev;
+      return visibleRoutes[0];
     });
-  }, [routes]);
+  }, [routes, activeVehicle]);
 
-  const mapCenter: [number, number] = [19.0760, 72.8777];
+  // ---- Realistic road geometry -------------------------------------------
+  // For each visible route, resolve depot → stop1 → stop2 … onto real roads
+  // via OSRM so the polyline follows streets instead of straight segments.
+  const [roadPaths, setRoadPaths] = useState<Record<string, LatLng[]>>({});
+  const [roadLoading, setRoadLoading] = useState<boolean>(false);
+
+  const straightPaths = useMemo(() => {
+    const depot = warehouses.find((w) => typeof w.location_lat === 'number' && typeof w.location_lng === 'number');
+    const depotPt: LatLng | null = depot ? [depot.location_lat, depot.location_lng] : null;
+    const out: Record<string, LatLng[]> = {};
+    const collect = (route: RouteItem) => {
+      const validStops = (route.stops || []).filter(
+        (s) => typeof s.dest_lat === 'number' && typeof s.dest_lng === 'number' && !isNaN(s.dest_lat) && !isNaN(s.dest_lng)
+      );
+      const pts: LatLng[] = [
+        ...(depotPt ? [depotPt] : []),
+        ...validStops.map((s) => [s.dest_lat, s.dest_lng] as LatLng),
+      ];
+      if (pts.length >= 2) out[route.route_id] = pts;
+    };
+    for (const route of visibleRoutes) collect(route);
+    for (const route of visibleDefaultRoutes) {
+      if (!out[route.route_id]) collect(route);
+    }
+    return out;
+  }, [visibleRoutes, visibleDefaultRoutes, warehouses]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const entries = Object.entries(straightPaths);
+    if (entries.length === 0) {
+      setRoadPaths({});
+      setRoadLoading(false);
+      return;
+    }
+    setRoadLoading(true);
+    (async () => {
+      const next: Record<string, LatLng[]> = {};
+      // Sequential to stay kind to the free OSRM demo server.
+      for (const [routeId, pts] of entries) {
+        try {
+          next[routeId] = await fetchRoadGeometry(pts);
+        } catch {
+          next[routeId] = pts; // offline fallback: straight segment
+        }
+        if (cancelled) return;
+      }
+      if (!cancelled) {
+        setRoadPaths(next);
+        setRoadLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [JSON.stringify(Object.keys(straightPaths)), JSON.stringify(Object.values(straightPaths).flat())]);
+
+  const focusPoints: LatLng[] = useMemo(() => {
+    if (selectedRoute && roadPaths[selectedRoute.route_id]?.length) return roadPaths[selectedRoute.route_id];
+    if (selectedRoute && straightPaths[selectedRoute.route_id]?.length) return straightPaths[selectedRoute.route_id];
+    const first = Object.values(roadPaths)[0] || Object.values(straightPaths)[0];
+    return first || [];
+  }, [selectedRoute, roadPaths, straightPaths]);
+
+  // Geographic center of India — routes now span Mumbai <-> Delhi <-> Chennai/Kolkata.
+  const mapCenter: [number, number] = [22.0, 79.0];
 
   return (
     <div className="p-6 space-y-6">
@@ -84,14 +237,52 @@ export const LiveRouteMap: React.FC<LiveRouteMapProps> = ({ warehouses, vehicles
           )}
         </div>
 
-        <button
-          onClick={onOptimize}
-          disabled={isOptimizing}
-          className="px-5 py-2.5 rounded-xl bg-gradient-to-r from-sky-500 to-indigo-600 hover:from-sky-400 hover:to-indigo-500 text-white text-xs font-semibold shadow-lg shadow-sky-500/20 transition-all flex items-center gap-2 disabled:opacity-50"
-        >
-          <RefreshCw className={`w-4 h-4 ${isOptimizing ? 'animate-spin' : ''}`} />
-          <span>{isOptimizing ? 'Re-Solving Routes...' : 'Optimize Route'}</span>
-        </button>
+        <div className="flex items-center gap-2 flex-wrap">
+          <select
+            value={activeVehicle}
+            onChange={(e) => onSelectVehicle?.(e.target.value)}
+            className="px-3 py-2.5 rounded-xl bg-gray-900/80 border border-gray-700 text-xs text-white font-semibold outline-none focus:border-sky-500/60 min-w-[200px]"
+            title="Choose which vehicle's optimized route to show"
+          >
+            <option value="ALL">All vehicles</option>
+            {vehicles.map((v) => {
+              const vid = v.id || (v as any).vehicle_id;
+              return (
+                <option key={vid} value={vid}>
+                  {vid} — {v.name}
+                </option>
+              );
+            })}
+          </select>
+          <button
+            onClick={() => onOptimize(activeVehicle)}
+            disabled={isOptimizing}
+            className="px-5 py-2.5 rounded-xl bg-gradient-to-r from-sky-500 to-indigo-600 hover:from-sky-400 hover:to-indigo-500 text-white text-xs font-semibold shadow-lg shadow-sky-500/20 transition-all flex items-center gap-2 disabled:opacity-50"
+          >
+            <RefreshCw className={`w-4 h-4 ${isOptimizing ? 'animate-spin' : ''}`} />
+            <span>{isOptimizing ? 'Re-Solving Routes...' : activeVehicle === 'ALL' ? 'Optimize Route' : `Optimize ${activeVehicle}`}</span>
+          </button>
+        </div>
+      </div>
+
+      {activeVehicle !== 'ALL' && (
+        <div className="glass-panel px-4 py-2.5 rounded-2xl text-xs text-emerald-300 border border-emerald-500/25 flex items-center gap-2">
+          <CheckCircle2 className="w-4 h-4 shrink-0" />
+          Showing optimized route for <span className="font-bold">{activeVehicle}</span>
+          {visibleRoutes.length > 0 && (
+            <>— {visibleRoutes[0].stops.length} stops · {visibleRoutes[0].total_distance_km.toFixed(1)} km · {visibleRoutes[0].fuel_estimate_liters.toFixed(1)} L</>
+          )}
+          {routes.length > 0 && visibleRoutes.length === 0 && (
+            <span className="text-amber-300">— no route yet for this vehicle, press Optimize.</span>
+          )}
+        </div>
+      )}
+
+      <div className="glass-panel px-4 py-2.5 rounded-2xl text-xs text-gray-300 border border-gray-800 flex items-center gap-4 flex-wrap">
+        <span className="flex items-center gap-1.5"><MapPin className="w-3.5 h-3.5 text-green-500" /> <b className="text-green-400">START</b> trip origin</span>
+        <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded-full bg-sky-500 border border-white inline-block" /> numbered delivery stop</span>
+        <span className="flex items-center gap-1.5"><MapPin className="w-3.5 h-3.5 text-red-500" /> <b className="text-red-400">END</b> final drop</span>
+        <span className="ml-auto text-[11px] text-gray-500">{roadLoading ? 'Snapping path to real roads…' : 'Road-following path via OSRM'}</span>
       </div>
 
       {planner}
@@ -115,11 +306,12 @@ export const LiveRouteMap: React.FC<LiveRouteMapProps> = ({ warehouses, vehicles
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         <div className="glass-panel lg:col-span-2 p-2 rounded-2xl h-[560px] relative overflow-hidden border border-gray-800">
-          <MapContainer center={mapCenter} zoom={7} className="logimind-map" style={{ height: '100%', width: '100%', borderRadius: '0.75rem' }}>
+          <MapContainer center={mapCenter} zoom={5} className="logimind-map" style={{ height: '100%', width: '100%', borderRadius: '0.75rem' }}>
             <TileLayer
               attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
               url="https://tile.openstreetmap.org/{z}/{x}/{y}.png"
             />
+            {focusPoints.length >= 2 && <FitRouteBounds points={focusPoints} />}
 
             {warehouses.filter(wh => typeof wh.location_lat === 'number' && typeof wh.location_lng === 'number' && !isNaN(wh.location_lat) && !isNaN(wh.location_lng)).map((wh) => (
               <Marker key={wh.id} position={[wh.location_lat, wh.location_lng]} icon={warehouseIcon}>
@@ -132,7 +324,7 @@ export const LiveRouteMap: React.FC<LiveRouteMapProps> = ({ warehouses, vehicles
               </Marker>
             ))}
 
-            {vehicles.filter(v => typeof v.current_lat === 'number' && typeof v.current_lng === 'number' && !isNaN(v.current_lat) && !isNaN(v.current_lng)).map((v) => (
+            {visibleVehicles.filter(v => typeof v.current_lat === 'number' && typeof v.current_lng === 'number' && !isNaN(v.current_lat) && !isNaN(v.current_lng)).map((v) => (
               <Marker key={v.id || v.name} position={[v.current_lat, v.current_lng]} icon={vehicleIcon}>
                 <Popup>
                   <div className="p-1">
@@ -143,39 +335,58 @@ export const LiveRouteMap: React.FC<LiveRouteMapProps> = ({ warehouses, vehicles
               </Marker>
             ))}
 
-            {/* Default baseline polylines (grey dashed, underneath) */}
-            {defaultRoutes.map((route) => {
+            {/* Grey dashed baseline (road-snapped when available) */}
+            {visibleDefaultRoutes.map((route) => {
               if (!route || !Array.isArray(route.stops) || route.stops.length === 0) return null;
               const validStops = route.stops.filter((s) => Number.isFinite(s.dest_lat) && Number.isFinite(s.dest_lng));
               if (validStops.length === 0) return null;
-              let depotPos: [number, number] | null = null;
-              if (warehouses.length > 0) {
-                depotPos = [warehouses[0].location_lat, warehouses[0].location_lng];
-              }
-              const points: [number, number][] = [
-                ...(depotPos ? [depotPos] : []),
-                ...validStops.map((s) => [s.dest_lat, s.dest_lng] as [number, number]),
-                ...(depotPos ? [depotPos] : []),
-              ];
+              const pts = roadPaths[route.route_id]?.length >= 2 ? roadPaths[route.route_id] : straightPaths[route.route_id];
+              if (!pts || pts.length < 2) return null;
               return (
-                <Polyline key={`default-${route.route_id}`} positions={points} pathOptions={{ color: '#9ca3af', weight: 3, opacity: 0.65, dashArray: '8, 8' }} />
+                <Polyline key={`default-${route.route_id}`} positions={pts} pathOptions={{ color: '#9ca3af', weight: 3, opacity: 0.65, dashArray: '8, 8' }} />
               );
             })}
 
-            {routes.map((route, idx) => {
-              const color = routeColors[idx % routeColors.length];
-              const depot = warehouses.find(w => typeof w.location_lat === 'number' && typeof w.location_lng === 'number') || { location_lat: 40.7128, location_lng: -74.0060 };
+            {visibleRoutes.map((route, idx) => {
+              // Single-vehicle view: solid BLUE path (#3b82f6). ALL view: distinct color per route.
+              const color = activeVehicle === 'ALL' ? routeColors[idx % routeColors.length] : '#3b82f6';
+              const pts = roadPaths[route.route_id]?.length >= 2 ? roadPaths[route.route_id] : straightPaths[route.route_id];
+              if (!pts || pts.length < 2) return null;
+              const isFocused = !selectedRoute || selectedRoute.route_id === route.route_id;
               const validStops = (route.stops || []).filter(s => typeof s.dest_lat === 'number' && typeof s.dest_lng === 'number' && !isNaN(s.dest_lat) && !isNaN(s.dest_lng));
-              const points: [number, number][] = [
-                [depot.location_lat, depot.location_lng],
-                ...validStops.map(s => [s.dest_lat, s.dest_lng] as [number, number])
-              ];
+              const lastStop = validStops[validStops.length - 1];
+              const midStops = validStops.slice(0, Math.max(0, validStops.length - 1));
+              const startLabel = routeStartText(route, warehouses);
+              const endLabel = routeEndText(route);
 
               return (
                 <React.Fragment key={route.route_id}>
-                  {points.length >= 2 && <Polyline positions={points} color={color} weight={4} opacity={0.8} dashArray="8, 8" />}
-                  {validStops.map((stop) => (
-                    <Marker key={stop.order_id} position={[stop.dest_lat, stop.dest_lng]} icon={stopIcon}>
+                  <Polyline positions={pts} pathOptions={{ color: '#ffffff', weight: isFocused ? 8 : 6, opacity: isFocused ? 0.35 : 0.15 }} />
+                  <Polyline positions={pts} pathOptions={{ color, weight: isFocused ? 5 : 3.5, opacity: isFocused ? 1 : 0.5 }} />
+                  {isFocused && (
+                    <Marker position={pts[0]} icon={startIcon} zIndexOffset={1000}>
+                      <Popup>
+                        <div className="p-1">
+                          <span className="text-[10px] font-extrabold px-2 py-0.5 rounded-full bg-green-600 text-white">START</span>
+                          <h4 className="font-bold text-white text-xs mt-1">{startLabel}</h4>
+                          <p className="text-[11px] text-gray-400">{route.vehicle_id} · {route.vehicle_name} begins route</p>
+                        </div>
+                      </Popup>
+                    </Marker>
+                  )}
+                  {isFocused && lastStop && (
+                    <Marker position={[lastStop.dest_lat, lastStop.dest_lng]} icon={endIcon} zIndexOffset={1000}>
+                      <Popup>
+                        <div className="p-1">
+                          <span className="text-[10px] font-extrabold px-2 py-0.5 rounded-full bg-red-600 text-white">END</span>
+                          <h4 className="font-bold text-white text-xs mt-1">{endLabel}</h4>
+                          <p className="text-[11px] text-gray-400">Final stop · ETA {lastStop.eta}</p>
+                        </div>
+                      </Popup>
+                    </Marker>
+                  )}
+                  {midStops.map((stop) => (
+                    <Marker key={stop.order_id} position={[stop.dest_lat, stop.dest_lng]} icon={numberedStopIcon(stop.sequence)}>
                       <Popup>
                         <div className="p-1">
                           <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-sky-500/20 text-sky-400">
@@ -201,22 +412,30 @@ export const LiveRouteMap: React.FC<LiveRouteMapProps> = ({ warehouses, vehicles
             </h3>
             <div className="text-xs text-gray-400 space-y-1">
               <div>Solver Engine: <span className="font-semibold text-white">{solverEngine || 'Clarke-Wright Savings + 2-Opt'}</span></div>
-              <div>Total Active Routes: <span className="font-semibold text-white">{routes.length}</span></div>
+              {activeVehicle !== 'ALL' && (
+                <div>Focused Vehicle: <span className="font-semibold text-emerald-300">{activeVehicle}</span></div>
+              )}
+              <div>Total Active Routes: <span className="font-semibold text-white">{visibleRoutes.length}</span></div>
               {typeof totalDistanceKm === 'number' && (
                 <div>Total Distance: <span className="font-semibold text-sky-400">{totalDistanceKm.toFixed(1)} km</span></div>
               )}
               <div>Estimated Fuel: <span className="font-semibold text-emerald-400">
-                {routes.reduce((acc, r) => acc + r.fuel_estimate_liters, 0).toFixed(1)} Liters
+                {visibleRoutes.reduce((acc, r) => acc + r.fuel_estimate_liters, 0).toFixed(1)} Liters
               </span></div>
               <div>CO2 Footprint: <span className="font-semibold text-purple-400">
-                {routes.reduce((acc, r) => acc + r.carbon_emissions_kg, 0).toFixed(1)} kg
+                {visibleRoutes.reduce((acc, r) => acc + r.carbon_emissions_kg, 0).toFixed(1)} kg
               </span></div>
             </div>
           </div>
 
           <div className="glass-panel p-4 rounded-2xl max-h-[420px] overflow-y-auto space-y-3">
-            <h4 className="text-xs font-bold text-gray-400 uppercase tracking-wider">Assigned Delivery Routes</h4>
-            {routes.map((route) => (
+            <h4 className="text-xs font-bold text-gray-400 uppercase tracking-wider">
+              {activeVehicle === 'ALL' ? 'Assigned Delivery Routes' : `Route · ${activeVehicle}`}
+            </h4>
+            {visibleRoutes.length === 0 && routes.length > 0 && activeVehicle !== 'ALL' && (
+              <p className="text-[11px] text-amber-300">No optimized route for {activeVehicle} yet — press “Optimize {activeVehicle}”.</p>
+            )}
+            {visibleRoutes.map((route) => (
               <div
                 key={route.route_id}
                 onClick={() => setSelectedRoute(route)}
@@ -233,6 +452,21 @@ export const LiveRouteMap: React.FC<LiveRouteMapProps> = ({ warehouses, vehicles
                   </span>
                 </div>
                 <div className="text-xs text-white font-medium mt-1">{route.vehicle_name} ({route.vehicle_id})</div>
+                <div className="mt-2 space-y-1.5 rounded-lg bg-gray-950/60 border border-gray-800/80 px-2.5 py-2">
+                  <div className="flex items-start gap-1.5 text-[11px] leading-snug">
+                    <Flag className="w-3 h-3 text-emerald-400 shrink-0 mt-0.5" />
+                    <span className="text-gray-500 font-semibold shrink-0">Start:</span>
+                    <span className="text-gray-200 font-medium break-words">{routeStartText(route, warehouses)}</span>
+                  </div>
+                  <div className="flex items-start gap-1.5 text-[11px] leading-snug">
+                    <CircleDot className="w-3 h-3 text-red-400 shrink-0 mt-0.5" />
+                    <span className="text-gray-500 font-semibold shrink-0">End:</span>
+                    <span className="text-gray-200 font-medium break-words">{routeEndText(route)}</span>
+                  </div>
+                </div>
+                <div className="text-[10px] text-gray-500 mt-1.5">
+                  Driver {route.driver_id} · {route.total_distance_km} km · {route.fuel_estimate_liters} L fuel · {route.carbon_emissions_kg} kg CO2
+                </div>
               </div>
             ))}
           </div>

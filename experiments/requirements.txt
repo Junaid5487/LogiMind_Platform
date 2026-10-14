@@ -1,0 +1,9 @@
+# Experiment dependencies (already installed in backend/.venv)
+# Verified versions used for the results in experiments/results/
+numpy==2.5.3
+pandas==3.0.6
+scipy==1.18.1
+scikit-learn==1.9.1
+ortools==9.15.6755
+shap==0.52.0
+matplotlib==3.11.2

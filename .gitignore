@@ -16,6 +16,10 @@ __pycache__/
 .vscode/
 .DS_Store
 
+# Local dev logs
+frontend-dev.log
+*.log
+
 # Experiment caches (regenerate with experiments/README.md commands)
 experiments/data/
 experiments/artifacts/*.pkl

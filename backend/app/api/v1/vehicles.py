@@ -14,8 +14,9 @@ def get_vehicles(db: Session = Depends(get_db_session)):
     
     defaults = {
         "V-101": {"current_lat": 19.0760, "current_lng": 72.8777, "fuel_level_pct": 88, "engine_temp_c": 85.0, "health_status": "NORMAL", "failure_risk_pct": 15},
-        "V-102": {"current_lat": 19.0330, "current_lng": 73.0297, "fuel_level_pct": 75, "engine_temp_c": 88.0, "health_status": "NORMAL", "failure_risk_pct": 22},
-        "V-104": {"current_lat": 18.5204, "current_lng": 73.8567, "fuel_level_pct": 92, "engine_temp_c": 98.5, "health_status": "WARNING", "failure_risk_pct": 60}
+        "V-102": {"current_lat": 28.6139, "current_lng": 77.2090, "fuel_level_pct": 75, "engine_temp_c": 88.0, "health_status": "NORMAL", "failure_risk_pct": 22},
+        "V-103": {"current_lat": 12.9716, "current_lng": 77.5946, "fuel_level_pct": 81, "engine_temp_c": 87.0, "health_status": "NORMAL", "failure_risk_pct": 25},
+        "V-104": {"current_lat": 21.1458, "current_lng": 79.0882, "fuel_level_pct": 92, "engine_temp_c": 98.5, "health_status": "WARNING", "failure_risk_pct": 60}
     }
 
     result = []
@@ -43,8 +44,9 @@ def get_vehicles(db: Session = Depends(get_db_session)):
     if not result:
         return [
             {"id": "V-101", "vehicle_id": "V-101", "name": "Tata Prima 5530.S", "type": "HEAVY_TRUCK", "capacity_kg": 5000.0, "fuel_type": "DIESEL", "status": "AVAILABLE", "current_lat": 19.0760, "current_lng": 72.8777, "fuel_level_pct": 88, "engine_temp_c": 85.0, "mileage_km": 62000.0, "health_status": "NORMAL", "failure_risk_pct": 15},
-            {"id": "V-102", "vehicle_id": "V-102", "name": "Mahindra Treo Zor EV", "type": "EV_VAN", "capacity_kg": 1800.0, "fuel_type": "ELECTRIC", "status": "IN_TRANSIT", "current_lat": 19.0330, "current_lng": 73.0297, "fuel_level_pct": 75, "engine_temp_c": 88.0, "mileage_km": 18500.0, "health_status": "NORMAL", "failure_risk_pct": 22},
-            {"id": "V-104", "vehicle_id": "V-104", "name": "Ashok Leyland BADA DOST", "type": "EV_VAN", "capacity_kg": 1500.0, "fuel_type": "ELECTRIC", "status": "MAINTENANCE", "current_lat": 18.5204, "current_lng": 73.8567, "fuel_level_pct": 92, "engine_temp_c": 98.5, "mileage_km": 31000.0, "health_status": "WARNING", "failure_risk_pct": 60}
+            {"id": "V-102", "vehicle_id": "V-102", "name": "Mahindra Treo Zor EV", "type": "EV_VAN", "capacity_kg": 1800.0, "fuel_type": "ELECTRIC", "status": "AVAILABLE", "current_lat": 28.6139, "current_lng": 77.2090, "fuel_level_pct": 75, "engine_temp_c": 88.0, "mileage_km": 18500.0, "health_status": "NORMAL", "failure_risk_pct": 22},
+            {"id": "V-103", "vehicle_id": "V-103", "name": "Eicher Pro 3019", "type": "HEAVY_TRUCK", "capacity_kg": 6000.0, "fuel_type": "DIESEL", "status": "AVAILABLE", "current_lat": 12.9716, "current_lng": 77.5946, "fuel_level_pct": 81, "engine_temp_c": 87.0, "mileage_km": 115000.0, "health_status": "NORMAL", "failure_risk_pct": 25},
+            {"id": "V-104", "vehicle_id": "V-104", "name": "Ashok Leyland BADA DOST", "type": "REFRIGERATED_TRUCK", "capacity_kg": 2500.0, "fuel_type": "DIESEL", "status": "MAINTENANCE", "current_lat": 21.1458, "current_lng": 79.0882, "fuel_level_pct": 92, "engine_temp_c": 98.5, "mileage_km": 31000.0, "health_status": "WARNING", "failure_risk_pct": 60}
         ]
 
     return result

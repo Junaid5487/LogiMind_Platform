@@ -1,25 +1,18 @@
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from typing import List, Dict, Any, Optional
+from sqlalchemy.orm import Session
+
+from app.dependencies.database import get_db_session
+from app.db.models import Warehouse, InventoryItem
+from app.db.seed_data import INVENTORY_SEEDS
 from app.services.optimization.inventory_lp import InventoryLPOptimizer
 from app.services.ml.forecaster import DemandForecaster
 
 router = APIRouter(prefix="", tags=["Inventory Management"])
 
-# In-memory inventory registry (mock data pattern, consistent with drivers registry)
-WAREHOUSES: List[Dict[str, Any]] = [
-    {"id": "w1111111-1111-1111-1111-111111111111", "name": "Mumbai Central Logistics Hub", "location_lat": 19.0760, "location_lng": 72.8777},
-    {"id": "w2222222-2222-2222-2222-222222222222", "name": "Navi Mumbai Cargo Distribution Center", "location_lat": 19.0330, "location_lng": 73.0297},
-    {"id": "w3333333-3333-3333-3333-333333333333", "name": "Pune Industrial Fulfillment Hub", "location_lat": 18.5204, "location_lng": 73.8567},
-]
-
-INVENTORY: List[Dict[str, Any]] = [
-    {"inventory_id": "INV-01", "warehouse_id": "w1111111-1111-1111-1111-111111111111", "sku": "SKU-ELEC-101", "item_name": "Electronic Components Kit", "quantity": 140, "reorder_threshold": 30, "unit": "units"},
-    {"inventory_id": "INV-02", "warehouse_id": "w2222222-2222-2222-2222-222222222222", "sku": "SKU-ELEC-101", "item_name": "Electronic Components Kit", "quantity": 12, "reorder_threshold": 30, "unit": "units"},
-    {"inventory_id": "INV-03", "warehouse_id": "w3333333-3333-3333-3333-333333333333", "sku": "SKU-ELEC-101", "item_name": "Electronic Components Kit", "quantity": 55, "reorder_threshold": 30, "unit": "units"},
-    {"inventory_id": "INV-04", "warehouse_id": "w1111111-1111-1111-1111-111111111111", "sku": "SKU-PHAR-201", "item_name": "Pharmaceutical Supplies", "quantity": 45, "reorder_threshold": 15, "unit": "boxes"},
-    {"inventory_id": "INV-05", "warehouse_id": "w2222222-2222-2222-2222-222222222222", "sku": "SKU-PHAR-201", "item_name": "Pharmaceutical Supplies", "quantity": 8, "reorder_threshold": 15, "unit": "boxes"},
-]
+# INR per km transfer cost used by the LP optimizer UI estimates.
+TRANSFER_COST_INR_PER_KM = 12.0
 
 class CreateInventoryItemRequest(BaseModel):
     warehouse_id: str
@@ -35,114 +28,211 @@ class ShiftInventoryRequest(BaseModel):
     sku: str
     quantity: int
 
+class UpdateInventoryItemRequest(BaseModel):
+    quantity: Optional[int] = None
+    reorder_threshold: Optional[int] = None
+    item_name: Optional[str] = None
+    unit: Optional[str] = None
+
+
 class DemandForecastRequest(BaseModel):
     warehouse_id: str
     sku: str
     horizon_days: Optional[int] = 7
 
-def _next_inventory_id() -> str:
-    existing = {i["inventory_id"] for i in INVENTORY}
-    n = 1
-    while f"INV-{n:02d}" in existing:
-        n += 1
-    return f"INV-{n:02d}"
 
-def _warehouse_name(warehouse_id: str) -> str:
-    for w in WAREHOUSES:
-        if w["id"] == warehouse_id:
-            return w["name"]
-    return warehouse_id
+def _serialize(item: InventoryItem) -> Dict[str, Any]:
+    return {
+        "inventory_id": item.inventory_id,
+        "warehouse_id": item.warehouse_id,
+        "sku": item.sku,
+        "item_name": item.item_name,
+        "quantity": item.quantity,
+        "reorder_threshold": item.reorder_threshold,
+        "unit": item.unit,
+    }
+
+
+def _warehouse_or_404(db: Session, warehouse_id: str) -> Warehouse:
+    wh = db.query(Warehouse).filter(Warehouse.warehouse_id == warehouse_id).first()
+    if not wh:
+        raise HTTPException(status_code=404, detail=f"Unknown warehouse {warehouse_id}")
+    return wh
+
+
+def _warehouse_payload(db: Session) -> List[Dict[str, Any]]:
+    """Live warehouse list for the LP optimizer — always from the DB so newly
+    added hubs participate and deleted hubs never receive ghost transfers."""
+    return [
+        {"id": w.warehouse_id, "name": w.warehouse_name,
+         "location_lat": w.latitude, "location_lng": w.longitude}
+        for w in db.query(Warehouse).all()
+    ]
+
+
+def _inventory_payload(db: Session) -> List[Dict[str, Any]]:
+    return [_serialize(i) for i in db.query(InventoryItem).all()]
+
+
+def _warehouse_name(db: Session, warehouse_id: str) -> str:
+    wh = db.query(Warehouse).filter(Warehouse.warehouse_id == warehouse_id).first()
+    return wh.warehouse_name if wh else warehouse_id
+
 
 @router.get("/inventory", response_model=List[Dict[str, Any]])
-def get_inventory():
-    return INVENTORY
+def get_inventory(warehouse_id: Optional[str] = None, db: Session = Depends(get_db_session)):
+    q = db.query(InventoryItem)
+    if warehouse_id:
+        q = q.filter(InventoryItem.warehouse_id == warehouse_id)
+    return [_serialize(i) for i in q.order_by(InventoryItem.sku.asc()).all()]
+
+
+@router.get("/inventory/skus", response_model=List[Dict[str, Any]])
+def list_skus(warehouse_id: Optional[str] = None, db: Session = Depends(get_db_session)):
+    """Distinct SKUs (with per-warehouse availability) for dropdowns."""
+    q = db.query(InventoryItem)
+    if warehouse_id:
+        q = q.filter(InventoryItem.warehouse_id == warehouse_id)
+    by_sku: Dict[str, Dict[str, Any]] = {}
+    for i in q.all():
+        entry = by_sku.setdefault(i.sku, {
+            "sku": i.sku, "item_name": i.item_name, "unit": i.unit,
+            "total_quantity": 0, "warehouses": [],
+        })
+        entry["total_quantity"] += i.quantity or 0
+        entry["warehouses"].append({
+            "warehouse_id": i.warehouse_id,
+            "warehouse_name": _warehouse_name(db, i.warehouse_id),
+            "quantity": i.quantity,
+        })
+    return sorted(by_sku.values(), key=lambda e: e["sku"])
 
 @router.post("/inventory", response_model=Dict[str, Any], status_code=201)
-def create_inventory_item(req: CreateInventoryItemRequest):
+def create_inventory_item(req: CreateInventoryItemRequest, db: Session = Depends(get_db_session)):
     if not req.sku.strip():
         raise HTTPException(status_code=400, detail="SKU is required")
     if not req.item_name.strip():
         raise HTTPException(status_code=400, detail="Item name is required")
     if req.quantity < 0:
         raise HTTPException(status_code=400, detail="Quantity must be >= 0")
-    if not any(w["id"] == req.warehouse_id for w in WAREHOUSES):
-        raise HTTPException(status_code=400, detail=f"Unknown warehouse {req.warehouse_id}")
+    _warehouse_or_404(db, req.warehouse_id)
 
-    # Merge into an existing SKU row at this warehouse instead of duplicating it
-    for item in INVENTORY:
-        if item["warehouse_id"] == req.warehouse_id and item["sku"] == req.sku.strip().upper():
-            item["quantity"] += req.quantity
-            return {"status": "MERGED", "item": item}
+    sku = req.sku.strip().upper()
+    existing = db.query(InventoryItem).filter(
+        InventoryItem.warehouse_id == req.warehouse_id, InventoryItem.sku == sku
+    ).first()
+    if existing:
+        # Merge into an existing SKU row at this warehouse instead of duplicating it
+        existing.quantity = (existing.quantity or 0) + req.quantity
+        db.commit()
+        db.refresh(existing)
+        return {"status": "MERGED", "item": _serialize(existing)}
 
-    new_item = {
-        "inventory_id": _next_inventory_id(),
-        "warehouse_id": req.warehouse_id,
-        "sku": req.sku.strip().upper(),
-        "item_name": req.item_name.strip(),
-        "quantity": req.quantity,
-        "reorder_threshold": max(req.reorder_threshold, 0),
-        "unit": req.unit.strip() or "units",
-    }
-    INVENTORY.append(new_item)
-    return {"status": "CREATED", "item": new_item}
+    item = InventoryItem(
+        warehouse_id=req.warehouse_id,
+        sku=sku,
+        item_name=req.item_name.strip(),
+        quantity=req.quantity,
+        reorder_threshold=max(req.reorder_threshold, 0),
+        unit=req.unit.strip() or "units",
+    )
+    db.add(item)
+    db.commit()
+    db.refresh(item)
+    return {"status": "CREATED", "item": _serialize(item)}
+
+@router.patch("/inventory/{inventory_id}", response_model=Dict[str, Any])
+def update_inventory_item(inventory_id: str, req: UpdateInventoryItemRequest, db: Session = Depends(get_db_session)):
+    """Edit quantity / threshold / name in place (no delete + re-add needed)."""
+    item = db.query(InventoryItem).filter(InventoryItem.inventory_id == inventory_id).first()
+    if not item:
+        raise HTTPException(status_code=404, detail=f"Inventory item {inventory_id} not found")
+    if req.quantity is not None:
+        if req.quantity < 0:
+            raise HTTPException(status_code=400, detail="Quantity must be >= 0")
+        item.quantity = req.quantity
+    if req.reorder_threshold is not None:
+        if req.reorder_threshold < 0:
+            raise HTTPException(status_code=400, detail="Reorder threshold must be >= 0")
+        item.reorder_threshold = req.reorder_threshold
+    if req.item_name is not None:
+        if not req.item_name.strip():
+            raise HTTPException(status_code=400, detail="Item name is required")
+        item.item_name = req.item_name.strip()
+    if req.unit is not None:
+        item.unit = req.unit.strip() or "units"
+    db.commit()
+    db.refresh(item)
+    return {"status": "UPDATED", "item": _serialize(item)}
 
 @router.delete("/inventory/{inventory_id}", response_model=Dict[str, Any])
-def delete_inventory_item(inventory_id: str):
-    for idx, item in enumerate(INVENTORY):
-        if item["inventory_id"] == inventory_id:
-            removed = INVENTORY.pop(idx)
-            return {"status": "REMOVED", "item": removed}
-    raise HTTPException(status_code=404, detail=f"Inventory item {inventory_id} not found")
+def delete_inventory_item(inventory_id: str, db: Session = Depends(get_db_session)):
+    item = db.query(InventoryItem).filter(InventoryItem.inventory_id == inventory_id).first()
+    if not item:
+        raise HTTPException(status_code=404, detail=f"Inventory item {inventory_id} not found")
+    payload = _serialize(item)
+    db.delete(item)
+    db.commit()
+    return {"status": "REMOVED", "item": payload}
 
 @router.post("/inventory/shift", response_model=Dict[str, Any])
-def shift_inventory(req: ShiftInventoryRequest):
+def shift_inventory(req: ShiftInventoryRequest, db: Session = Depends(get_db_session)):
     if req.from_warehouse_id == req.to_warehouse_id:
         raise HTTPException(status_code=400, detail="Source and destination warehouses must differ")
     if req.quantity <= 0:
         raise HTTPException(status_code=400, detail="Shift quantity must be > 0")
-    if not any(w["id"] == req.from_warehouse_id for w in WAREHOUSES):
-        raise HTTPException(status_code=400, detail=f"Unknown source warehouse {req.from_warehouse_id}")
-    if not any(w["id"] == req.to_warehouse_id for w in WAREHOUSES):
-        raise HTTPException(status_code=400, detail=f"Unknown destination warehouse {req.to_warehouse_id}")
+    _warehouse_or_404(db, req.from_warehouse_id)
+    _warehouse_or_404(db, req.to_warehouse_id)
 
-    source = next((i for i in INVENTORY if i["warehouse_id"] == req.from_warehouse_id and i["sku"] == req.sku), None)
+    source = db.query(InventoryItem).filter(
+        InventoryItem.warehouse_id == req.from_warehouse_id, InventoryItem.sku == req.sku
+    ).first()
     if source is None:
         raise HTTPException(status_code=404, detail=f"SKU {req.sku} not stocked at source warehouse")
-    if req.quantity > source["quantity"]:
+    if req.quantity > (source.quantity or 0):
         raise HTTPException(
             status_code=400,
-            detail=f"Cannot shift {req.quantity}: only {source['quantity']} available at source",
+            detail=f"Cannot shift {req.quantity}: only {source.quantity} available at source",
         )
 
-    dest = next((i for i in INVENTORY if i["warehouse_id"] == req.to_warehouse_id and i["sku"] == req.sku), None)
-    source["quantity"] -= req.quantity
+    dest = db.query(InventoryItem).filter(
+        InventoryItem.warehouse_id == req.to_warehouse_id, InventoryItem.sku == req.sku
+    ).first()
+    source.quantity = (source.quantity or 0) - req.quantity
     if dest is None:
-        dest = {
-            "inventory_id": _next_inventory_id(),
-            "warehouse_id": req.to_warehouse_id,
-            "sku": source["sku"],
-            "item_name": source["item_name"],
-            "quantity": req.quantity,
-            "reorder_threshold": source["reorder_threshold"],
-            "unit": source["unit"],
-        }
-        INVENTORY.append(dest)
+        dest = InventoryItem(
+            warehouse_id=req.to_warehouse_id,
+            sku=source.sku,
+            item_name=source.item_name,
+            quantity=req.quantity,
+            reorder_threshold=source.reorder_threshold,
+            unit=source.unit,
+        )
+        db.add(dest)
     else:
-        dest["quantity"] += req.quantity
+        dest.quantity = (dest.quantity or 0) + req.quantity
+    db.commit()
+    db.refresh(source)
+    db.refresh(dest)
 
     return {
         "status": "SHIFTED",
-        "sku": source["sku"],
+        "sku": source.sku,
         "quantity": req.quantity,
-        "from_warehouse": _warehouse_name(req.from_warehouse_id),
-        "to_warehouse": _warehouse_name(req.to_warehouse_id),
-        "source_item": source,
-        "destination_item": dest,
+        "from_warehouse": _warehouse_name(db, req.from_warehouse_id),
+        "to_warehouse": _warehouse_name(db, req.to_warehouse_id),
+        "source_item": _serialize(source),
+        "destination_item": _serialize(dest),
     }
 
 @router.post("/inventory/rebalance", response_model=Dict[str, Any])
-def rebalance_inventory():
-    optimizer = InventoryLPOptimizer(warehouses=WAREHOUSES, inventory_data=INVENTORY)
+def rebalance_inventory(db: Session = Depends(get_db_session)):
+    optimizer = InventoryLPOptimizer(
+        warehouses=_warehouse_payload(db),
+        inventory_data=_inventory_payload(db),
+        cost_per_km=TRANSFER_COST_INR_PER_KM,
+        currency="₹",
+    )
     return optimizer.optimize_rebalance()
 
 @router.post("/forecast/demand", response_model=Dict[str, Any])

@@ -1,0 +1,13 @@
+% ours_lam1.0 (ours) vs ortools (ref); medians over paired runs
+\begin{tabular}{lrrrrr}
+\toprule
+Metric & Med. ours & Med. ref & Med. diff & $p$ (Wilcoxon) & $r_{rb}$ \\
+\midrule
+exposure & 2.38 & 81.51 & -78.14 & 0.0000 (***) & -1.000 \\
+mc_cost_mean & 1.22 & 48.56 & -45.58 & 0.0000 (***) & -1.000 \\
+analytic_breakdowns & 0.00 & 0.12 & -0.12 & 0.0000 (***) & -1.000 \\
+distance & 922.15 & 825.25 & 97.00 & 0.0000 (***) & 0.999 \\
+mc_ontime_frac & 1.00 & 0.99 & 0.01 & 0.0000 (***) & 1.000 \\
+solve_ms & 1.33 & 10000.38 & -9999.24 & 0.0000 (***) & -1.000 \\
+\bottomrule
+\end{tabular}

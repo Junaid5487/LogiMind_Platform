@@ -1,0 +1,13 @@
+% assign_aware (ours) vs baseline (ref); medians over paired runs
+\begin{tabular}{lrrrrr}
+\toprule
+Metric & Med. ours & Med. ref & Med. diff & $p$ (Wilcoxon) & $r_{rb}$ \\
+\midrule
+exposure & 3.59 & 92.90 & -90.73 & 0.0000 (***) & -1.000 \\
+mc_cost_mean & 2.00 & 57.65 & -53.36 & 0.0000 (***) & -1.000 \\
+analytic_breakdowns & 0.01 & 0.14 & -0.14 & 0.0000 (***) & -1.000 \\
+distance & 872.85 & 872.85 & 0.00 & 1.0000 (ns) & 0.000 \\
+mc_ontime_frac & 1.00 & 0.99 & 0.01 & 0.0000 (***) & 1.000 \\
+solve_ms & 2.58 & 2.55 & 0.03 & 0.0000 (***) & 1.000 \\
+\bottomrule
+\end{tabular}

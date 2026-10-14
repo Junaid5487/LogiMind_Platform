@@ -1,0 +1,13 @@
+% ours_lam1.0 (ours) vs baseline (ref); medians over paired runs
+\begin{tabular}{lrrrrr}
+\toprule
+Metric & Med. ours & Med. ref & Med. diff & $p$ (Wilcoxon) & $r_{rb}$ \\
+\midrule
+exposure & 4.47 & 36.47 & -25.12 & 0.0000 (***) & -0.997 \\
+mc_cost_mean & 2.54 & 22.18 & -14.13 & 0.0000 (***) & -0.997 \\
+analytic_breakdowns & 0.01 & 0.05 & -0.04 & 0.0000 (***) & -0.997 \\
+distance & 910.85 & 872.85 & 30.20 & 0.0000 (***) & 0.925 \\
+mc_ontime_frac & 1.00 & 1.00 & 0.00 & 0.0000 (***) & 1.000 \\
+solve_ms & 2.65 & 2.87 & -0.18 & 0.7073 (ns) & 0.056 \\
+\bottomrule
+\end{tabular}

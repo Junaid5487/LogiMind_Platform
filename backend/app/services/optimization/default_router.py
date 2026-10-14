@@ -117,6 +117,20 @@ def build_default_routes(warehouses: List[Dict], orders: List[Dict], vehicles: L
 
     active = _active_vehicles(vehicles)
     depot_lat, depot_lng = _depot_coords(warehouses)
+    depot = warehouses[0] if warehouses else {}
+    depot_name = depot.get("name") or "Mumbai Central Logistics Hub"
+    depot_city = depot.get("city") or "Mumbai"
+    depot_state = depot.get("state") or "MH"
+    depot_address = depot.get("address") or "Bhiwandi Logistics Park, NH 160"
+    start_location = {
+        "name": depot_name,
+        "city": depot_city,
+        "state": depot_state,
+        "address": depot_address,
+        "lat": depot_lat,
+        "lng": depot_lng,
+        "label": f"{depot_name}, {depot_city}" + (f" ({depot_state})" if depot_state else ""),
+    }
 
     # Same fairness rules as the solver: global capacity ceiling + even stop distribution
     max_load_kg = max((float(v.get("capacity_kg", 1500.0)) for v in active), default=1500.0)
@@ -177,6 +191,16 @@ def build_default_routes(warehouses: List[Dict], orders: List[Dict], vehicles: L
             "carbon_emissions_kg": carbon_kg,
             "stops": stops,
             "status": "DEFAULT",
+            "start_location": dict(start_location),
+            "end_location": {
+                "name": stops[-1].get("customer_name", "Customer"),
+                "order_id": stops[-1].get("order_id"),
+                "lat": stops[-1].get("dest_lat"),
+                "lng": stops[-1].get("dest_lng"),
+                "eta": stops[-1].get("eta"),
+                "sequence": stops[-1].get("sequence"),
+                "label": f"{stops[-1].get('customer_name', 'Customer')} ({stops[-1].get('order_id', '')})".strip(),
+            } if stops else None,
         })
         total_dist_km += dist_km
 
