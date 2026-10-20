@@ -7,17 +7,29 @@ from app.db.models import Vehicle
 
 router = APIRouter(prefix="/vehicles", tags=["Vehicles Registry"])
 
+# Synthesized telemetry keyed by vehicle id. The DB has no fuel/risk columns,
+# so the API and the VRP solver share one source of truth: the optimizer needs
+# fuel_level_pct (range guard) and failure_risk_pct (risk exclusion) to run
+# the same constraints the UI shows.
+VEHICLE_TELEMETRY_DEFAULTS = {
+    "V-101": {"current_lat": 19.0760, "current_lng": 72.8777, "fuel_level_pct": 88, "engine_temp_c": 85.0, "health_status": "NORMAL", "failure_risk_pct": 15},
+    "V-102": {"current_lat": 28.6139, "current_lng": 77.2090, "fuel_level_pct": 75, "engine_temp_c": 88.0, "health_status": "NORMAL", "failure_risk_pct": 22},
+    "V-103": {"current_lat": 12.9716, "current_lng": 77.5946, "fuel_level_pct": 81, "engine_temp_c": 87.0, "health_status": "NORMAL", "failure_risk_pct": 25},
+    "V-104": {"current_lat": 21.1458, "current_lng": 79.0882, "fuel_level_pct": 92, "engine_temp_c": 98.5, "health_status": "WARNING", "failure_risk_pct": 60},
+}
+VEHICLE_TELEMETRY_FALLBACK = {"current_lat": 19.0760, "current_lng": 72.8777, "fuel_level_pct": 80, "engine_temp_c": 85.0, "health_status": "NORMAL", "failure_risk_pct": 20}
+
+
+def vehicle_telemetry(vehicle_id: str) -> Dict[str, Any]:
+    """Telemetry dict for a vehicle id (defaults for unknown ids)."""
+    return dict(VEHICLE_TELEMETRY_DEFAULTS.get(vehicle_id, VEHICLE_TELEMETRY_FALLBACK))
+
 @router.get("", response_model=List[Dict[str, Any]])
 def get_vehicles(db: Session = Depends(get_db_session)):
     vehicles = db.query(Vehicle).all()
     veh_list = vehicles if vehicles else []
     
-    defaults = {
-        "V-101": {"current_lat": 19.0760, "current_lng": 72.8777, "fuel_level_pct": 88, "engine_temp_c": 85.0, "health_status": "NORMAL", "failure_risk_pct": 15},
-        "V-102": {"current_lat": 28.6139, "current_lng": 77.2090, "fuel_level_pct": 75, "engine_temp_c": 88.0, "health_status": "NORMAL", "failure_risk_pct": 22},
-        "V-103": {"current_lat": 12.9716, "current_lng": 77.5946, "fuel_level_pct": 81, "engine_temp_c": 87.0, "health_status": "NORMAL", "failure_risk_pct": 25},
-        "V-104": {"current_lat": 21.1458, "current_lng": 79.0882, "fuel_level_pct": 92, "engine_temp_c": 98.5, "health_status": "WARNING", "failure_risk_pct": 60}
-    }
+    defaults = VEHICLE_TELEMETRY_DEFAULTS
 
     result = []
     for v in veh_list:

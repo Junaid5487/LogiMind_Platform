@@ -3,6 +3,12 @@ from app.core.logging import logger
 from app.services.optimization.vrp_solver import haversine_distance_km
 
 class InventoryLPOptimizer:
+    # Solver preference order: bundled CBC first, then any other MILP solver
+    # the installed PuLP exposes. Newer PuLP releases (as installed on Render)
+    # report CPSAT (OR-Tools-backed) instead of PULP_CBC_CMD — accept it
+    # rather than dropping to the heuristic when a real solver exists.
+    SOLVER_PREFERENCE = ("PULP_CBC_CMD", "CPSAT", "COIN_CMD", "SCIP_CMD", "HiGHS_CMD", "PULP_CHOCO_CMD")
+
     def __init__(self, warehouses: List[Dict], inventory_data: List[Dict],
                  cost_per_km: float = 12.0, currency: str = "₹"):
         self.warehouses = warehouses
@@ -32,14 +38,37 @@ class InventoryLPOptimizer:
             result["solver_error"] = str(exc)
             return result
 
+    def _select_solver(self, pulp):
+        """Pick the first usable MILP solver on this machine."""
+        available = pulp.listSolvers(onlyAvailable=True)
+        last_error = None
+        for solver_name in self.SOLVER_PREFERENCE:
+            solver_cls = getattr(pulp, solver_name, None)
+            if solver_cls is None:
+                continue
+            if solver_name not in available:
+                last_error = solver_name + " listed but not executable"
+                continue
+            try:
+                return solver_cls(msg=False), solver_name
+            except Exception as exc:
+                last_error = solver_name + ": " + str(exc)
+                continue
+        raise RuntimeError(
+            "No MILP solver executable in this environment "
+            "(available solvers: " + str(available)
+            + "; tried " + str(self.SOLVER_PREFERENCE)
+            + ("; last error: " + last_error if last_error else "") + ")"
+        )
+
+
     def _solve_pulp(self) -> Dict[str, Any]:
         import pulp
 
-        # Fail fast with a clear message if the bundled CBC binary cannot run
-        # in this environment (checked before building any model).
-        available = pulp.listSolvers(onlyAvailable=True)
-        if "PULP_CBC_CMD" not in available:
-            raise RuntimeError(f"CBC solver not available in this environment (available solvers: {available})")
+        # Fail fast with a clear message if no usable MILP solver binary can
+        # run in this environment (checked before building any model).
+        solver, solver_name = self._select_solver(pulp)
+        logger.info(f"LP rebalance: using solver {solver_name}")
 
         recommendations = []
         total_transfer_cost = 0.0
@@ -86,7 +115,7 @@ class InventoryLPOptimizer:
             for d in deficit:
                 prob += pulp.lpSum([vars_dict[(s["wh_id"], d["wh_id"])] for s in surplus]) == min(d["needed"], sum(sp["available"] for sp in surplus))
 
-            prob.solve(pulp.PULP_CBC_CMD(msg=False))
+            prob.solve(solver)
 
             for s in surplus:
                 for d in deficit:
@@ -115,7 +144,7 @@ class InventoryLPOptimizer:
             "total_transfer_cost": round(total_transfer_cost, 2),
             "total_transfer_cost_usd": round(total_transfer_cost, 2),
             "currency": self.currency,
-            "solver_engine": "PuLP Linear Programming Simplex/CBC Solver",
+            "solver_engine": ("PuLP Linear Programming Simplex/CBC Solver" if solver_name == "PULP_CBC_CMD" else f"PuLP MILP Solver ({solver_name})"),
             "status": "OPTIMAL"
         }
 

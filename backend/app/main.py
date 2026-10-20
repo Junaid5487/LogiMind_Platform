@@ -1,5 +1,5 @@
 import os
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
@@ -72,8 +72,14 @@ if os.path.exists(frontend_dist):
 
     @app.get("/{full_path:path}")
     def serve_frontend(full_path: str):
-        if full_path.startswith("api/") or full_path in ["docs", "redoc", "openapi.json"]:
-            return None
+        if full_path.startswith("api/"):
+            # Never swallow an unmatched /api/* path: returning None here would
+            # answer 200 with a literal `null` body, so the client would fail
+            # later with confusing errors like "cannot read property of null"
+            # instead of a clean 404.
+            raise HTTPException(status_code=404, detail=f"Unknown API endpoint: /{full_path}")
+        if full_path in ["docs", "redoc", "openapi.json"]:
+            raise HTTPException(status_code=404, detail="Not found")
         file_path = os.path.join(frontend_dist, full_path)
         if os.path.exists(file_path) and os.path.isfile(file_path):
             return FileResponse(file_path)

@@ -11,6 +11,10 @@ class SimulationParamsRequest(BaseModel):
     disabled_vehicle_id: Optional[str] = None
     demand_multiplier: Optional[float] = 1.0
     fuel_price_usd: Optional[float] = 4.20
+    # What-if: open a new satellite hub (name shown in the summary narrative).
+    new_hub_name: Optional[str] = None
+    # Carbon price used for the cost/carbon ledger line (USD per metric ton).
+    carbon_price_usd_per_ton: Optional[float] = 0.0
 
 @router.post("/simulate", response_model=Dict[str, Any])
 def run_digital_twin_simulation(req: SimulationParamsRequest):

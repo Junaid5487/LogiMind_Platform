@@ -1,4 +1,4 @@
-import type { DashboardKPIs, WarehouseItem, VehicleItem, RouteItem, CopilotResponse, SimulationResult, DriverListItem, InventoryItem, ShiftInventoryPayload, ShiftInventoryResult, ScenarioOrder, DefaultRoutesResult, SkuAvailability, RebalanceResult } from '../types';
+import type { DashboardKPIs, WarehouseItem, VehicleItem, RouteItem, CopilotResponse, SimulationResult, DriverListItem, InventoryItem, ShiftInventoryPayload, ShiftInventoryResult, ScenarioOrder, DefaultRoutesResult, SkuAvailability, RebalanceResult, RouteObstacle, ObstacleReportResult, OptimizeResult, DispatchResult, RouteLedgerResult, CopilotAuditEntry } from '../types';
 
 const API_BASE_URL = typeof window !== 'undefined' && window.location.origin.includes('5173')
   ? 'http://localhost:8000/api/v1'
@@ -80,10 +80,148 @@ export async function fetchVehicles(): Promise<VehicleItem[]> {
   }
 }
 
-export async function optimizeRoutes(vehicleId?: string): Promise<{ routes: RouteItem[]; total_distance_km: number; solver_engine: string }> {
+export async function optimizeRoutes(vehicleId?: string): Promise<OptimizeResult> {
   const suffix = vehicleId && vehicleId !== 'ALL' ? `?vehicle_id=${encodeURIComponent(vehicleId)}` : '';
   const res = await fetch(`${API_BASE_URL}/routes/optimize${suffix}`, { method: 'POST', headers: getHeaders() });
   if (!res.ok) throw new Error('Failed to run VRP optimizer');
+  return await res.json();
+}
+
+// ---------------------------------------------------------------------------
+// Inventory-aware dispatch: LP recommendations → VRP transfer trips
+// ---------------------------------------------------------------------------
+
+/** Turn LP rebalance recommendations (or all, when omitted) into transfer trips. */
+export async function dispatchTransferTrips(
+  recommendations?: Array<{ [key: string]: any }>,
+): Promise<DispatchResult> {
+  const res = await fetch(`${API_BASE_URL}/routes/dispatch-transfers`, {
+    method: 'POST',
+    headers: getHeaders({ 'Content-Type': 'application/json' }),
+    body: JSON.stringify(recommendations ? { recommendations } : {}),
+  });
+  if (!res.ok) await parseApiError(res, 'Failed to dispatch transfer trips');
+  return await res.json();
+}
+
+// ---------------------------------------------------------------------------
+// Cost/carbon ledger + Copilot audit trail
+// ---------------------------------------------------------------------------
+
+export async function fetchRouteLedger(limit = 50, scope?: string): Promise<RouteLedgerResult> {
+  try {
+    const qs = scope ? `?limit=${limit}&scope=${encodeURIComponent(scope)}` : `?limit=${limit}`;
+    const res = await fetch(`${API_BASE_URL}/routes/ledger${qs}`, { headers: getHeaders() });
+    if (!res.ok) throw new Error('Failed to fetch route ledger');
+    return await res.json();
+  } catch {
+    return { entries: [], count: 0, totals: { runs: 0, routes_logged: 0, distance_km: 0, fuel_liters: 0, carbon_kg: 0, cost_usd: 0 } };
+  }
+}
+
+export async function fetchCopilotAudit(limit = 25): Promise<CopilotAuditEntry[]> {
+  try {
+    const res = await fetch(`${API_BASE_URL}/copilot/audit?limit=${limit}`, { headers: getHeaders() });
+    if (!res.ok) throw new Error('Failed to fetch copilot audit');
+    const data = await res.json();
+    return Array.isArray(data?.entries) ? data.entries : [];
+  } catch {
+    return [];
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Path obstacles (driver-reported blockages the optimizer routes around)
+// ---------------------------------------------------------------------------
+
+/**
+ * Drop any obstacle record that is null or missing usable coordinates.
+ *
+ * The rendering code reads `.latitude` / `.longitude` directly (to project
+ * no-go zones onto the map), so a single malformed record would crash the
+ * whole portal with "Cannot read properties of null (reading 'latitude')".
+ * Filtering here keeps every consumer safe.
+ */
+function sanitizeObstacles(list: unknown): RouteObstacle[] {
+  if (!Array.isArray(list)) return [];
+  return list.filter((ob: any): ob is RouteObstacle => {
+    if (!ob || typeof ob !== 'object') return false;
+    const lat = Number(ob.latitude);
+    const lng = Number(ob.longitude);
+    if (!Number.isFinite(lat) || !Number.isFinite(lng)) return false;
+    if (lat < -90 || lat > 90 || lng < -180 || lng > 180) return false;
+    return typeof ob.obstacle_id === 'string' && ob.obstacle_id.length > 0;
+  });
+}
+
+export async function fetchObstacles(status: 'ACTIVE' | 'RESOLVED' | 'ALL' = 'ACTIVE'): Promise<RouteObstacle[]> {
+  try {
+    const res = await fetch(`${API_BASE_URL}/routes/obstacles?status=${status}`, { headers: getHeaders() });
+    if (!res.ok) throw new Error('Failed to fetch obstacles');
+    const data = await res.json();
+    return sanitizeObstacles(data);
+  } catch {
+    return [];
+  }
+}
+
+export async function resolveObstacle(obstacleId: string): Promise<{ status: string; obstacle: RouteObstacle }> {
+  const res = await fetch(`${API_BASE_URL}/routes/obstacles/${encodeURIComponent(obstacleId)}`, {
+    method: 'DELETE',
+    headers: getHeaders(),
+  });
+  if (!res.ok) await parseApiError(res, 'Failed to resolve obstacle');
+  return await res.json();
+}
+
+export interface ReportObstaclePayload {
+  obstacle_type: string;
+  description?: string;
+  radius_km?: number;
+  latitude?: number;
+  longitude?: number;
+}
+
+/** Random point on the driver's current path, for the MVP demo button. */
+export interface DemoCoordinates {
+  latitude: number;
+  longitude: number;
+  radius_km: number;
+  leg_distance_km: number;
+  position_on_leg: number;
+  message: string;
+}
+
+/** Fetch a random demo blockage coordinate that falls on the active path. */
+export async function fetchDemoCoordinates(driverId: string): Promise<DemoCoordinates> {
+  const res = await fetch(`${API_BASE_URL}/driver/demo-coordinates?driver_id=${encodeURIComponent(driverId)}`, {
+    headers: getHeaders(),
+  });
+  if (!res.ok) await parseApiError(res, 'Failed to generate demo coordinates');
+  const data = await res.json();
+  // Guard against a null/garbled body (e.g. an older backend build that
+  // answers 200 with `null`) so the caller never dereferences a null point.
+  if (!data || typeof data.latitude !== 'number' || typeof data.longitude !== 'number') {
+    throw new Error(
+      'The backend did not return demo coordinates. Please restart the API server ' +
+      'so the /driver/demo-coordinates route is registered.'
+    );
+  }
+  return data as DemoCoordinates;
+}
+
+/** Driver reports a blockage; backend persists it AND re-optimizes their
+ *  remaining stops around all active obstacles, returning the updated shift. */
+export async function reportDriverObstacle(
+  driverId: string,
+  payload: ReportObstaclePayload,
+): Promise<ObstacleReportResult> {
+  const res = await fetch(`${API_BASE_URL}/driver/report-obstacle?driver_id=${encodeURIComponent(driverId)}`, {
+    method: 'POST',
+    headers: getHeaders({ 'Content-Type': 'application/json' }),
+    body: JSON.stringify(payload),
+  });
+  if (!res.ok) await parseApiError(res, 'Failed to report obstacle');
   return await res.json();
 }
 

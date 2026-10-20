@@ -9,10 +9,16 @@ class DigitalTwinSimulator:
         disabled_veh = params.get("disabled_vehicle_id")
         demand_mult = max(0.5, float(params.get("demand_multiplier", 1.0)))
         fuel_price = max(0.5, float(params.get("fuel_price_usd", 4.20)))
+        # What-if: open a new satellite hub — shorter hauls, +capex.
+        new_hub = str(params.get("new_hub_name") or "").strip()
+        carbon_price = max(0.0, float(params.get("carbon_price_usd_per_ton", 0.0) or 0.0))
 
         base_distance = 1240.0 * demand_mult
         base_fuel_liters = 347.2 * demand_mult
         base_fuel_cost = round(base_fuel_liters * fuel_price, 2)
+        # CO2 ledger: diesel-centric fleet factor (matches route ledger: 2.68 kg/L).
+        base_carbon_kg = round(base_fuel_liters * 2.68, 1)
+        base_carbon_cost = round(base_carbon_kg / 1000.0 * carbon_price, 2)
         base_sla = 98.4
         base_routes = int(math.ceil(14 * demand_mult))
 
@@ -58,7 +64,21 @@ class DigitalTwinSimulator:
             cost_penalty += (demand_mult - 1.0) * 850.0
             impact_reasons.append(f"{surge_pct}% order volume demand surge stresses fleet capacity.")
 
-        seed_str = f"{scenario_name}_{disabled_wh}_{disabled_veh}_{demand_mult}_{fuel_price}"
+        if new_hub:
+            # New satellite hub: orders re-balance closer to customers →
+            # shorter legs (down to −12%), fewer routes, better SLA; offset by
+            # an amortized capex/opex line in the cost model.
+            dist_surge -= 0.12
+            sla_impact += 2.4
+            cost_penalty -= 640.0     # fuel/last-mile savings…
+            cost_penalty += 1500.0    # …less amortized hub opex
+            extra_routes -= 2
+            impact_reasons.append(
+                f"New satellite hub '{new_hub}' absorbs ~12% of haul distance: "
+                "fewer route-km, +2.4% SLA, higher fixed hub opex."
+            )
+
+        seed_str = f"{scenario_name}_{disabled_wh}_{disabled_veh}_{demand_mult}_{fuel_price}_{new_hub}_{carbon_price}"
         rng = random.Random(hash(seed_str))
         mc_samples_cost = []
         mc_samples_sla = []
@@ -81,12 +101,15 @@ class DigitalTwinSimulator:
 
         sim_distance = round(base_distance * (1.0 + dist_surge), 1)
         sim_fuel_liters = round(base_fuel_liters * (1.0 + dist_surge), 1)
-        sim_routes = base_routes + extra_routes
+        sim_routes = max(1, base_routes + extra_routes)
+        sim_carbon_kg = round(sim_fuel_liters * 2.68, 1)
+        sim_carbon_cost = round(sim_carbon_kg / 1000.0 * carbon_price, 2)
 
         cost_delta = round(sim_fuel_cost - base_fuel_cost, 2)
         sla_delta = round(sim_sla - base_sla, 1)
         distance_delta = round(sim_distance - base_distance, 1)
         fuel_delta = round(sim_fuel_liters - base_fuel_liters, 1)
+        carbon_delta = round(sim_carbon_kg - base_carbon_kg, 1)
 
         summary_text = " ".join(impact_reasons) if impact_reasons else "Baseline operational state under nominal network conditions."
 
@@ -97,6 +120,8 @@ class DigitalTwinSimulator:
                 "total_distance_km": round(base_distance, 1),
                 "total_fuel_liters": round(base_fuel_liters, 1),
                 "total_fuel_cost_usd": base_fuel_cost,
+                "total_carbon_kg": base_carbon_kg,
+                "carbon_cost_usd": base_carbon_cost,
                 "on_time_sla_pct": base_sla,
                 "total_routes": base_routes
             },
@@ -104,6 +129,8 @@ class DigitalTwinSimulator:
                 "total_distance_km": sim_distance,
                 "total_fuel_liters": sim_fuel_liters,
                 "total_fuel_cost_usd": sim_fuel_cost,
+                "total_carbon_kg": sim_carbon_kg,
+                "carbon_cost_usd": sim_carbon_cost,
                 "on_time_sla_pct": sim_sla,
                 "total_routes": sim_routes
             },
@@ -111,7 +138,8 @@ class DigitalTwinSimulator:
                 "distance_km_delta": distance_delta,
                 "fuel_liters_delta": fuel_delta,
                 "cost_usd_delta": cost_delta,
+                "carbon_kg_delta": carbon_delta,
                 "sla_pct_delta": sla_delta
             },
-            "summary_explanation": f"Monte Carlo 1,000 Trial Simulation: {summary_text} (Cost Impact: ${cost_delta:+,} USD, SLA: {sla_delta:+}%)."
+            "summary_explanation": f"Monte Carlo 1,000 Trial Simulation: {summary_text} (Cost Impact: ${cost_delta:+,} USD, CO2: {carbon_delta:+} kg, SLA: {sla_delta:+}%)."
         }

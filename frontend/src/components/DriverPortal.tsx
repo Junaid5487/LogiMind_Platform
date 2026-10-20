@@ -1,12 +1,125 @@
 import React, { useEffect, useState } from 'react';
-import type { DriverActiveRoute, DriverRouteStop } from '../types';
-import { fetchDriverActiveRoute, updateDriverStopStatus } from '../services/api';
-import { Truck, RotateCcw, Gauge, Clock, Home, CheckCircle2, AlertTriangle, MapPin, ArrowRight, Timer } from 'lucide-react';
+import type { DriverActiveRoute, DriverRouteStop, RouteObstacle, ObstacleReportResult } from '../types';
+import { fetchDriverActiveRoute, updateDriverStopStatus, reportDriverObstacle, fetchObstacles, resolveObstacle, fetchDemoCoordinates } from '../services/api';
+import { Truck, RotateCcw, Gauge, Clock, Home, CheckCircle2, AlertTriangle, MapPin, ArrowRight, Timer, Construction, Route as RouteIcon, X, ShieldCheck, Zap } from 'lucide-react';
 
 interface DriverPortalProps {
   driverId?: string;
   onStopCompleted?: (stop: DriverRouteStop) => void;
 }
+
+const OBSTACLE_TYPES: Array<{ value: string; label: string }> = [
+  { value: 'ROAD_CLOSED', label: 'Road Closed' },
+  { value: 'ACCIDENT', label: 'Accident' },
+  { value: 'FLOODING', label: 'Flooding / Waterlogging' },
+  { value: 'CONSTRUCTION', label: 'Construction Work' },
+  { value: 'TRAFFIC_JAM', label: 'Heavy Traffic' },
+  { value: 'DEBRIS', label: 'Debris on Road' },
+  { value: 'PUBLIC_EVENT', label: 'Public Event / Rally' },
+  { value: 'OTHER', label: 'Other' },
+];
+
+const OBSTACLE_RADII_KM = [0.5, 1, 2, 3, 5];
+
+interface PathPreviewProps {
+  /** Naive straight-line path (before the blockage). */
+  straight?: Array<[number, number]>;
+  /** Obstacle-aware path (after re-optimization) — may contain detour via-points. */
+  detour?: Array<[number, number]>;
+  /** Active blockage circles to draw as no-go zones. */
+  obstacles?: RouteObstacle[];
+}
+
+/** Small SVG preview showing the straight path vs the obstacle-aware detour. */
+const PathPreview: React.FC<PathPreviewProps> = ({ straight, detour, obstacles }) => {
+  const W = 320;
+  const H = 180;
+  const PAD = 24;
+
+  // The span is set by the path only — the obstacle list is fleet-wide, so a
+  // distant blockage must not squash the preview (or shift the projection).
+  const pathPts = [...(straight || []), ...(detour || [])];
+  if (pathPts.length < 2) return null;
+
+  const lats = pathPts.map(p => p[0]);
+  const lngs = pathPts.map(p => p[1]);
+  const minLat = Math.min(...lats);
+  const maxLat = Math.max(...lats);
+  const minLng = Math.min(...lngs);
+  const maxLng = Math.max(...lngs);
+  // Guard against a degenerate (single-point) span.
+  const spanLat = maxLat - minLat || 0.001;
+  const spanLng = maxLng - minLng || 0.001;
+
+  // Only draw blockages near this route. Malformed records (null entry,
+  // missing/out-of-range coordinates) are dropped so the projection below
+  // can never dereference a null obstacle.
+  const marginLat = spanLat * 0.5 + 0.05;
+  const marginLng = spanLng * 0.5 + 0.05;
+  const nearObstacles = (obstacles || []).filter((o): o is RouteObstacle => {
+    if (!o || typeof o !== 'object') return false;
+    const lat = Number(o.latitude);
+    const lng = Number(o.longitude);
+    if (!Number.isFinite(lat) || !Number.isFinite(lng)) return false;
+    return (
+      lat >= minLat - marginLat && lat <= maxLat + marginLat &&
+      lng >= minLng - marginLng && lng <= maxLng + marginLng
+    );
+  });
+
+  // Equirectangular-ish projection: lng → x, lat → y (inverted).
+  const project = ([lat, lng]: [number, number]): [number, number] => [
+    PAD + ((lng - minLng) / spanLng) * (W - PAD * 2),
+    H - PAD - ((lat - minLat) / spanLat) * (H - PAD * 2),
+  ];
+
+  const toPath = (pts?: Array<[number, number]>): string =>
+    (pts || []).map(project).map((p, i) => `${i === 0 ? 'M' : 'L'} ${p[0].toFixed(1)} ${p[1].toFixed(1)}`).join(' ');
+
+  // Radius in px, derived from the km → degree scale of the view.
+  const kmPerDegLat = 110.574;
+  const pxPerDegLat = (H - PAD * 2) / spanLat;
+  const pxPerKm = pxPerDegLat / kmPerDegLat;
+
+  return (
+    <div className="bg-gray-950/70 border border-gray-800 rounded-xl p-2">
+      <svg viewBox={`0 0 ${W} ${H}`} className="w-full h-auto">
+        {/* Straight (before) path */}
+        {straight && straight.length >= 2 && (
+          <path d={toPath(straight)} fill="none" stroke="#6b7280" strokeWidth="1.5" strokeDasharray="4,3" />
+        )}
+        {/* Obstacle-aware (after) path */}
+        {detour && detour.length >= 2 && (
+          <path d={toPath(detour)} fill="none" stroke="#34d399" strokeWidth="2.5" strokeLinecap="round" />
+        )}
+        {/* No-go zones */}
+        {nearObstacles.map(o => {
+          const [cx, cy] = project([o.latitude, o.longitude]);
+          const r = Math.max(4, o.radius_km * pxPerKm);
+          return (
+            <circle key={o.obstacle_id} cx={cx} cy={cy} r={r}
+              fill="#fb7185" fillOpacity="0.18" stroke="#fb7185" strokeWidth="1.5" strokeDasharray="4,3" />
+          );
+        })}
+        {/* Stop markers on the detour path */}
+        {(detour || []).map((p, i) => {
+          const [cx, cy] = project(p);
+          return <circle key={`d${i}`} cx={cx} cy={cy} r="3.5" fill="#34d399" stroke="#0b0f17" strokeWidth="1.5" />;
+        })}
+        {/* Origin marker */}
+        {(detour || straight || []).length > 0 && (() => {
+          const [cx, cy] = project((detour || straight)![0]);
+          return <circle cx={cx} cy={cy} r="4.5" fill="#22d3ee" stroke="#0b0f17" strokeWidth="1.5" />;
+        })()}
+      </svg>
+      <div className="flex items-center gap-3 mt-1.5 px-1 text-[9px] text-gray-500">
+        <span className="flex items-center gap-1"><span className="w-3.5 border-t-2 border-dashed border-gray-500" /> Direct path</span>
+        <span className="flex items-center gap-1"><span className="w-3.5 border-t-2 border-emerald-400" /> Re-optimized</span>
+        <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-full bg-rose-400/40 border border-rose-400" /> Blockage</span>
+      </div>
+    </div>
+  );
+};
 
 export const DriverPortal: React.FC<DriverPortalProps> = ({
   driverId = 'DRV-01',
@@ -18,8 +131,26 @@ export const DriverPortal: React.FC<DriverPortalProps> = ({
   const [loading, setLoading] = useState<boolean>(true);
   const [exceptionNote, setExceptionNote] = useState<string>('');
   const [error, setError] = useState<string>('');
+  // Path obstacle reporting + re-optimization state.
+  const [obstacles, setObstacles] = useState<RouteObstacle[]>([]);
+  const [obstacleType, setObstacleType] = useState<string>('ROAD_CLOSED');
+  const [obstacleNote, setObstacleNote] = useState<string>('');
+  const [obstacleRadius, setObstacleRadius] = useState<number>(2);
+  const [reporting, setReporting] = useState<boolean>(false);
+  const [obstacleError, setObstacleError] = useState<string>('');
+  const [rerouteInfo, setRerouteInfo] = useState<ObstacleReportResult['reroute'] | null>(null);
+  // Driver-entered blockage coordinates (blank = backend picks the leg midpoint).
+  const [obstacleLat, setObstacleLat] = useState<string>('');
+  const [obstacleLng, setObstacleLng] = useState<string>('');
+  const [demoLoading, setDemoLoading] = useState<boolean>(false);
+  const [lastDemo, setLastDemo] = useState<{ lat: number; lng: number } | null>(null);
 
-  useEffect(() => { loadRoute(); }, [driverId]);
+  useEffect(() => { loadRoute(); loadObstacles(); }, [driverId]);
+
+  const loadObstacles = async () => {
+    const active = await fetchObstacles('ACTIVE');
+    setObstacles(active);
+  };
 
   const loadRoute = async () => {
     setLoading(true);
@@ -72,6 +203,120 @@ export const DriverPortal: React.FC<DriverPortalProps> = ({
     } catch (e: any) { setError(e.message || 'Failed to report exception'); }
   };
 
+  /** Driver flags a blockage on the path ahead → backend persists it and
+   *  re-optimizes the remaining stops around every active obstacle. */
+  const handleReportObstacle = async () => {
+    if (!obstacleNote.trim()) {
+      setObstacleError('Describe the obstacle before reporting.');
+      return;
+    }
+    // Both coordinates must be supplied together; partial input is rejected.
+    const hasLat = obstacleLat.trim() !== '';
+    const hasLng = obstacleLng.trim() !== '';
+    if (hasLat !== hasLng) {
+      setObstacleError('Enter both latitude and longitude, or leave both blank for auto-detect.');
+      return;
+    }
+    const lat = hasLat ? Number(obstacleLat) : undefined;
+    const lng = hasLng ? Number(obstacleLng) : undefined;
+    if (hasLat && (!Number.isFinite(lat!) || lat! < -90 || lat! > 90)) {
+      setObstacleError('Latitude must be a number between -90 and 90.');
+      return;
+    }
+    if (hasLng && (!Number.isFinite(lng!) || lng! < -180 || lng! > 180)) {
+      setObstacleError('Longitude must be a number between -180 and 180.');
+      return;
+    }
+    setReporting(true);
+    setObstacleError('');
+    try {
+      const res = await reportDriverObstacle(driverId, {
+        obstacle_type: obstacleType,
+        description: obstacleNote.trim(),
+        radius_km: obstacleRadius,
+        ...(lat !== undefined && lng !== undefined ? { latitude: lat, longitude: lng } : {}),
+      });
+      setActiveRoute(res.updated_shift);
+      setRerouteInfo(res.reroute);
+      setObstacleNote('');
+      // Stop order may have changed — jump to the first pending stop in the NEW order.
+      const firstPending = res.updated_shift.assigned_route?.stops?.findIndex(
+        (s: DriverRouteStop) => s.status !== 'DELIVERED'
+      ) ?? -1;
+      if (firstPending >= 0) setCurrentStopIndex(firstPending);
+      await loadObstacles();
+    } catch (e: any) {
+      setObstacleError(e.message || 'Failed to report obstacle');
+    } finally {
+      setReporting(false);
+    }
+  };
+
+  /** MVP demo: ask the backend for a random point ON the active path, fill the
+   *  coordinate inputs, then report it so the route re-optimizes around it.
+   *  Every click yields a different point → a different visible detour. */
+  const handleDemoCoordinates = async () => {
+    setDemoLoading(true);
+    setObstacleError('');
+    try {
+      const demo = await fetchDemoCoordinates(driverId);
+      const lat = Number(demo.latitude);
+      const lng = Number(demo.longitude);
+      if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
+        throw new Error('Backend returned an invalid demo coordinate.');
+      }
+      setObstacleLat(String(lat));
+      setObstacleLng(String(lng));
+      setLastDemo({ lat, lng });
+      if (!obstacleNote.trim()) {
+        setObstacleNote(`Demo blockage at ${lat}, ${lng}`);
+      }
+      // Auto-report so the demo shows the route actually changing.
+      await handleReportObstacleWithCoords(lat, lng);
+    } catch (e: any) {
+      setObstacleError(e.message || 'Failed to generate demo coordinates');
+    } finally {
+      setDemoLoading(false);
+    }
+  };
+
+  /** Report a blockage at explicit coordinates (used by the demo button). */
+  const handleReportObstacleWithCoords = async (lat: number, lng: number) => {
+    setReporting(true);
+    setObstacleError('');
+    try {
+      const res = await reportDriverObstacle(driverId, {
+        obstacle_type: obstacleType,
+        description: obstacleNote.trim() || `Demo blockage at ${lat}, ${lng}`,
+        radius_km: obstacleRadius,
+        latitude: lat,
+        longitude: lng,
+      });
+      setActiveRoute(res.updated_shift);
+      setRerouteInfo(res.reroute);
+      setObstacleNote('');
+      const firstPending = res.updated_shift.assigned_route?.stops?.findIndex(
+        (s: DriverRouteStop) => s.status !== 'DELIVERED'
+      ) ?? -1;
+      if (firstPending >= 0) setCurrentStopIndex(firstPending);
+      await loadObstacles();
+    } catch (e: any) {
+      setObstacleError(e.message || 'Failed to report obstacle');
+    } finally {
+      setReporting(false);
+    }
+  };
+
+  /** Blockage cleared by authorities → stop forcing detours around it. */
+  const handleClearObstacle = async (obstacleId: string) => {
+    try {
+      await resolveObstacle(obstacleId);
+      await loadObstacles();
+    } catch (e: any) {
+      setObstacleError(e.message || 'Failed to clear obstacle');
+    }
+  };
+
   if (loading) {
     return <div className="min-h-screen bg-[#0b0f17] flex items-center justify-center"><div className="text-white text-sm font-medium">Loading driver portal...</div></div>;
   }
@@ -111,6 +356,70 @@ export const DriverPortal: React.FC<DriverPortalProps> = ({
       </header>
 
       <main className="max-w-4xl mx-auto px-4 py-5 space-y-5">
+        {/* Re-Optimization Result Banner */}
+        {rerouteInfo && (
+          <section className="glass-panel p-4 rounded-2xl border border-emerald-500/40 bg-emerald-500/5 space-y-3">
+            <div className="flex items-start justify-between gap-3">
+              <div className="flex items-center gap-2.5">
+                <div className="w-9 h-9 rounded-xl bg-emerald-500/20 text-emerald-400 flex items-center justify-center shrink-0">
+                  <RouteIcon className="w-4 h-4" />
+                </div>
+                <div>
+                  <h3 className="text-sm font-bold text-white">Route Re-Optimized Around Obstacle</h3>
+                  <p className="text-[11px] text-gray-400">{rerouteInfo.message}</p>
+                </div>
+              </div>
+              <button onClick={() => setRerouteInfo(null)} title="Dismiss" className="p-1.5 rounded-lg hover:bg-gray-800 text-gray-400 hover:text-white transition-all shrink-0">
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="grid grid-cols-3 gap-2 text-center">
+              <div className="bg-gray-900/60 rounded-lg p-2">
+                <p className="text-[9px] text-gray-500 uppercase tracking-wider">Direct Path</p>
+                <p className="text-xs font-bold text-gray-300">{rerouteInfo.straight_remaining_km} km</p>
+              </div>
+              <div className="bg-gray-900/60 rounded-lg p-2">
+                <p className="text-[9px] text-gray-500 uppercase tracking-wider">Re-Optimized</p>
+                <p className="text-xs font-bold text-emerald-400">{rerouteInfo.new_remaining_km} km</p>
+              </div>
+              <div className="bg-gray-900/60 rounded-lg p-2">
+                <p className="text-[9px] text-gray-500 uppercase tracking-wider">Stop Order</p>
+                <p className={`text-xs font-bold ${rerouteInfo.stops_resequenced ? 'text-sky-400' : 'text-gray-300'}`}>
+                  {rerouteInfo.stops_resequenced ? 'CHANGED' : 'HELD'}
+                </p>
+              </div>
+            </div>
+
+            <div className="text-[11px] text-gray-300 flex items-center gap-1.5 flex-wrap">
+              <span className="text-gray-500 font-semibold">New order:</span>
+              {rerouteInfo.new_order.map((oid, i) => (
+                <span key={oid} className="px-1.5 py-0.5 rounded bg-sky-500/10 border border-sky-500/30 text-sky-300 text-[10px] font-bold">
+                  {i + 1}. {oid}
+                </span>
+              ))}
+            </div>
+
+            {rerouteInfo.obstacles_avoided.length > 0 && (
+              <div className="text-[10px] text-rose-300 flex items-start gap-1.5">
+                <Construction className="w-3.5 h-3.5 mt-px shrink-0" />
+                <span>
+                  Avoiding: {rerouteInfo.obstacles_avoided
+                    .map(a => `${(a?.obstacle_type || 'OTHER').replace(/_/g, ' ').toLowerCase()} (~${Number(a?.radius_km) || 0} km zone)`)
+                    .join(' · ')}
+                </span>
+              </div>
+            )}
+
+            {/* Visual before/after: straight path vs the new detour around the blockage. */}
+            <PathPreview
+              straight={activeRoute.assigned_route?.straight_geometry}
+              detour={activeRoute.assigned_route?.geometry}
+              obstacles={obstacles}
+            />
+          </section>
+        )}
+
         {/* Vehicle & Telemetry Card */}
         <section className="glass-panel p-5 rounded-2xl border border-gray-800 space-y-4">
           <div className="flex items-center gap-3">
@@ -273,6 +582,128 @@ export const DriverPortal: React.FC<DriverPortalProps> = ({
             <button onClick={() => handleReportException('IN_TRANSIT')} className="px-3 py-2 rounded-xl bg-gray-800 hover:bg-gray-700 text-gray-300 text-xs font-bold border border-gray-700 transition-all">Continue</button>
           </div>
           {error && <div className="text-xs text-red-400 bg-red-500/10 p-2 rounded-lg border border-red-500/30">{error}</div>}
+        </section>
+
+        {/* Path Obstacle Report → Auto Re-Optimization */}
+        <section className="glass-panel p-4 rounded-2xl border border-gray-800 space-y-3">
+          <h3 className="text-sm font-bold text-white flex items-center gap-2">
+            <Construction className="w-4 h-4 text-rose-400" /> Report Path Obstacle & Re-Optimize
+          </h3>
+          <p className="text-[11px] text-gray-400">
+            Road blocked ahead? Report it and the VRP optimizer immediately re-routes your remaining stops around the no-go zone.
+          </p>
+
+          <div className="grid grid-cols-2 gap-2">
+            <div className="space-y-1">
+              <label className="text-[9px] text-gray-500 font-semibold uppercase tracking-wider">Obstacle Type</label>
+              <select
+                value={obstacleType}
+                onChange={(e) => setObstacleType(e.target.value)}
+                className="w-full bg-gray-950 border border-gray-800 rounded-lg px-3 py-2 text-xs text-white focus:outline-none focus:border-rose-500"
+              >
+                {OBSTACLE_TYPES.map(t => <option key={t.value} value={t.value}>{t.label}</option>)}
+              </select>
+            </div>
+            <div className="space-y-1">
+              <label className="text-[9px] text-gray-500 font-semibold uppercase tracking-wider">Blockage Radius</label>
+              <select
+                value={obstacleRadius}
+                onChange={(e) => setObstacleRadius(Number(e.target.value))}
+                className="w-full bg-gray-950 border border-gray-800 rounded-lg px-3 py-2 text-xs text-white focus:outline-none focus:border-rose-500"
+              >
+                {OBSTACLE_RADII_KM.map(r => <option key={r} value={r}>{r} km zone</option>)}
+              </select>
+            </div>
+          </div>
+
+          <textarea
+            value={obstacleNote}
+            onChange={(e) => setObstacleNote(e.target.value)}
+            placeholder="Describe where and what is blocked (e.g. Accident near Sion Flyover — both lanes blocked)..."
+            className="w-full bg-gray-900 border border-gray-800 rounded-xl px-3 py-2 text-xs text-white placeholder-gray-500 focus:outline-none focus:border-rose-500 resize-none"
+            rows={2}
+          />
+
+          {/* Blockage coordinates — typed by the driver, or auto-filled by the demo button. */}
+          <div className="space-y-1.5">
+            <div className="flex items-center justify-between gap-2">
+              <label className="text-[9px] text-gray-500 font-semibold uppercase tracking-wider">
+                Blockage Coordinates
+              </label>
+              <button
+                onClick={handleDemoCoordinates}
+                disabled={demoLoading || reporting}
+                title="Drop a random blockage point onto your active path and re-optimize"
+                className="px-2 py-1 rounded-lg bg-violet-500/20 hover:bg-violet-500/30 text-violet-300 text-[10px] font-bold border border-violet-500/30 transition-all disabled:opacity-40 flex items-center gap-1"
+              >
+                <Zap className={`w-3 h-3 ${demoLoading ? 'animate-pulse' : ''}`} />
+                {demoLoading ? 'Generating...' : 'Enter Demo Coordinates'}
+              </button>
+            </div>
+
+            <div className="grid grid-cols-2 gap-2">
+              <input
+                type="number"
+                step="any"
+                value={obstacleLat}
+                onChange={(e) => setObstacleLat(e.target.value)}
+                placeholder="Latitude"
+                className="w-full bg-gray-950 border border-gray-800 rounded-lg px-3 py-2 text-xs text-white placeholder-gray-500 focus:outline-none focus:border-rose-500"
+              />
+              <input
+                type="number"
+                step="any"
+                value={obstacleLng}
+                onChange={(e) => setObstacleLng(e.target.value)}
+                placeholder="Longitude"
+                className="w-full bg-gray-950 border border-gray-800 rounded-lg px-3 py-2 text-xs text-white placeholder-gray-500 focus:outline-none focus:border-rose-500"
+              />
+            </div>
+            <p className="text-[10px] text-gray-500">
+              Leave blank to auto-place the blockage at the midpoint of your current leg.
+              {lastDemo && (
+                <span className="text-violet-300"> Last demo: {lastDemo.lat}, {lastDemo.lng}</span>
+              )}
+            </p>
+          </div>
+
+          <button
+            onClick={handleReportObstacle}
+            disabled={reporting || !obstacleNote.trim()}
+            className="w-full px-3 py-2.5 rounded-xl bg-rose-500/20 hover:bg-rose-500/30 text-rose-300 text-xs font-bold border border-rose-500/30 transition-all disabled:opacity-40 flex items-center justify-center gap-2"
+          >
+            <RotateCcw className={`w-3.5 h-3.5 ${reporting ? 'animate-spin' : ''}`} />
+            {reporting ? 'Re-Optimizing Route...' : 'Report Obstacle & Re-Optimize Route'}
+          </button>
+          {obstacleError && (
+            <div className="text-xs text-red-400 bg-red-500/10 p-2 rounded-lg border border-red-500/30">{obstacleError}</div>
+          )}
+
+          {obstacles.length > 0 && (
+            <div className="space-y-2 pt-2 border-t border-gray-800">
+              <p className="text-[10px] text-gray-400 font-semibold uppercase tracking-wider">
+                Active Blockages ({obstacles.length})
+              </p>
+              {obstacles.map(ob => (
+                <div key={ob.obstacle_id} className="flex items-start justify-between gap-2 bg-rose-500/5 border border-rose-500/20 rounded-xl p-2.5">
+                  <div className="min-w-0">
+                    <p className="text-xs font-bold text-white">{(ob.obstacle_type || 'OTHER').replace(/_/g, ' ')}</p>
+                    <p className="text-[10px] text-gray-400 truncate">{ob.description || 'No description'}</p>
+                    <p className="text-[10px] text-gray-500">
+                      ~{Number(ob.radius_km) || 0} km zone{ob.reported_by ? ` · reported by ${ob.reported_by}` : ''}
+                    </p>
+                  </div>
+                  <button
+                    onClick={() => handleClearObstacle(ob.obstacle_id)}
+                    title="Mark blockage as cleared"
+                    className="shrink-0 px-2 py-1 rounded-lg bg-gray-800 hover:bg-gray-700 text-gray-300 text-[10px] font-bold border border-gray-700 transition-all flex items-center gap-1"
+                  >
+                    <ShieldCheck className="w-3 h-3" /> Clear
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
         </section>
 
         {/* Transport Delays */}

@@ -12,8 +12,8 @@ import { DriverPortal } from './components/DriverPortal';
 import { FleetManagerPortal } from './components/FleetManagerPortal';
 import { WarehouseManagerPortal } from './components/WarehouseManagerPortal';
 
-import { fetchDashboardKPIs, fetchWarehouses, fetchVehicles, fetchScenarioOrders, fetchDefaultRoutes, optimizeRoutes } from './services/api';
-import type { DashboardKPIs, WarehouseItem, VehicleItem, RouteItem, ScenarioOrder, UserRole } from './types';
+import { fetchDashboardKPIs, fetchWarehouses, fetchVehicles, fetchScenarioOrders, fetchDefaultRoutes, optimizeRoutes, fetchObstacles } from './services/api';
+import type { DashboardKPIs, WarehouseItem, VehicleItem, RouteItem, ScenarioOrder, UserRole, RouteObstacle, RouteComparison, ConstraintReport } from './types';
 import { ScenarioPlanner } from './components/ScenarioPlanner';
 
 const ROLE_DEFAULT_TAB: Record<UserRole, string> = {
@@ -34,28 +34,34 @@ function MainApp() {
   const [vehicles, setVehicles] = useState<VehicleItem[]>([]);
   const [routes, setRoutes] = useState<RouteItem[]>([]);
   const [defaultRoutes, setDefaultRoutes] = useState<RouteItem[]>([]);
+  const [obstacles, setObstacles] = useState<RouteObstacle[]>([]);
   const [orders, setOrders] = useState<ScenarioOrder[]>([]);
   const [loadingVrp, setLoadingVrp] = useState<boolean>(false);
   const [optimizedOnce, setOptimizedOnce] = useState<boolean>(false);
   const [selectedVehicleId, setSelectedVehicleId] = useState<string>('ALL');
   const [vrpMeta, setVrpMeta] = useState<{ solverEngine?: string; totalDistanceKm?: number; defaultDistanceKm?: number; lastRunAt?: string; optimizedVehicleId?: string }>({});
+  // Naive-vs-optimized savings + constraint audit from the last optimize run.
+  const [routeComparison, setRouteComparison] = useState<RouteComparison | null>(null);
+  const [constraintReport, setConstraintReport] = useState<ConstraintReport | null>(null);
 
   const [driverId, setDriverId] = useState<string>('DRV-01');
 
   const loadData = async () => {
     try {
-      const [kpiRes, whRes, vehRes, orderRes, defRes] = await Promise.all([
+      const [kpiRes, whRes, vehRes, orderRes, defRes, obsRes] = await Promise.all([
         fetchDashboardKPIs(),
         fetchWarehouses(),
         fetchVehicles(),
         fetchScenarioOrders().catch(() => [] as ScenarioOrder[]),
         fetchDefaultRoutes().catch(() => ({ routes: [] as RouteItem[], total_distance_km: 0, status: 'ERROR', solver_engine: 'default' })),
+        fetchObstacles().catch(() => [] as RouteObstacle[]),
       ]);
 
       setKpis(kpiRes);
       setWarehouses(whRes);
       setVehicles(vehRes);
       setOrders(orderRes);
+      setObstacles(obsRes);
       // Default-first UX: the map shows the naive baseline immediately;
       // the optimized result appears only after the user presses "Optimize Route".
       setDefaultRoutes(defRes.routes || []);
@@ -94,6 +100,14 @@ function MainApp() {
     loadData();
   }, []);
 
+  // Obstacles can be reported/cleared from other portals — refresh them when
+  // the map opens so the drawn no-go zones are always current.
+  useEffect(() => {
+    if (activeTab === 'routemap') {
+      fetchObstacles().then(setObstacles).catch(() => {});
+    }
+  }, [activeTab]);
+
   const handleRunVrpOptimization = async (vehicleId?: string) => {
     setLoadingVrp(true);
     const startedAt = Date.now();
@@ -102,6 +116,8 @@ function MainApp() {
     try {
       const vrpRes = await optimizeRoutes(targetVehicle);
       setRoutes(vrpRes.routes || []);
+      setRouteComparison(vrpRes.comparison || null);
+      setConstraintReport(vrpRes.constraint_report || null);
       setOptimizedOnce(true);
       setVrpMeta((prev) => ({
         ...prev,
@@ -130,18 +146,28 @@ function MainApp() {
   };
 
   const handleExecuteCopilotAction = (action: string) => {
-    if (action === 'NAVIGATE_SIMULATOR') {
+    // Every suggested action routes to the tab that can complete it.
+    if (action === 'RUN_VRP') {
+      setActiveTab('routemap');
+      setIsCopilotOpen(false);
+      handleRunVrpOptimization('ALL');
+    } else if (action === 'RUN_REBALANCE' || action === 'DISPATCH_TRANSFERS') {
+      setActiveTab('warehouse');
+      setIsCopilotOpen(false);
+    } else if (action === 'RUN_SIMULATION') {
       setActiveTab('simulator');
       setIsCopilotOpen(false);
-    } else if (action === 'RUN_VRP') {
-      setActiveTab('routemap');
-      handleRunVrpOptimization();
-      setIsCopilotOpen(false);
-    } else if (action === 'REBALANCE_LP') {
-      setActiveTab('warehouse');
+    } else if (action === 'SHOW_LEDGER') {
+      setActiveTab('fleetmgr');
       setIsCopilotOpen(false);
     } else if (action === 'MAINTENANCE_SCHEDULE') {
       setActiveTab('fleet');
+      setIsCopilotOpen(false);
+    } else if (action === 'NAVIGATE_SIMULATOR') {
+      setActiveTab('simulator');
+      setIsCopilotOpen(false);
+    } else if (action === 'REBALANCE_LP') {
+      setActiveTab('warehouse');
       setIsCopilotOpen(false);
     }
   };
@@ -181,6 +207,7 @@ function MainApp() {
             vehicles={vehicles}
             routes={routes}
             defaultRoutes={defaultRoutes}
+            obstacles={obstacles}
             onOptimize={handleRunVrpOptimization}
             isOptimizing={loadingVrp}
             solverEngine={vrpMeta.solverEngine}
@@ -190,6 +217,8 @@ function MainApp() {
             optimizedAtLeastOnce={optimizedOnce}
             selectedVehicleId={selectedVehicleId}
             onSelectVehicle={setSelectedVehicleId}
+            routeComparison={routeComparison}
+            constraintReport={constraintReport}
             planner={<ScenarioPlanner orders={orders} warehouses={warehouses} onReload={reloadScenario} />}
           />
         )}
@@ -213,6 +242,7 @@ function MainApp() {
             onOptimize={handleRunVrpOptimization}
             isOptimizing={loadingVrp}
             onReload={reloadScenario}
+            constraintReport={constraintReport}
           />
         )}
 

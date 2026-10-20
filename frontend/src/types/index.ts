@@ -81,6 +81,12 @@ export interface DriverRoute {
   estimated_fuel_liters: number;
   carbon_emissions_kg: number;
   stops: DriverRouteStop[];
+  /** Obstacle-aware path: current position + detour via-points + stops. */
+  geometry?: Array<[number, number]>;
+  /** Naive straight-line path (no obstacle avoidance) for before/after view. */
+  straight_geometry?: Array<[number, number]>;
+  /** Blockages the current route was re-optimized around. */
+  obstacles_avoided?: ObstacleAvoidance[];
 }
 
 export interface DriverActiveRoute {
@@ -186,6 +192,73 @@ export interface RouteStop {
   priority: string;
 }
 
+/** Why this vehicle got the tour: capacity/range/risk screen + cost model. */
+export interface VehicleSelection {
+  status: 'FEASIBLE' | 'VIOLATED';
+  reason: string;
+  load_kg: number;
+  capacity_kg: number;
+  tour_distance_km: number;
+  usable_range_km: number;
+  fuel_type: string;
+  cost_per_km_usd: number;
+  estimated_cost_usd: number;
+  failure_risk_pct?: number;
+  rejected_candidates: Array<{ vehicle_id: string; vehicle_name: string; reasons: string[] }>;
+}
+
+/** Fleet totals for one planning strategy (naive or optimized). */
+export interface FleetTotals {
+  distance_km: number;
+  fuel_liters: number;
+  carbon_kg: number;
+  cost_usd: number;
+}
+
+/** Naive-vs-optimized savings returned by POST /routes/optimize. */
+export interface RouteComparison {
+  baseline_strategy: string;
+  naive: FleetTotals;
+  optimized: FleetTotals;
+  saved: FleetTotals;
+  saved_pct: { distance: number; cost: number; carbon: number };
+}
+
+/** Fleet-level constraint audit (excluded vehicles + selection policy). */
+export interface ConstraintReport {
+  capacity_kg: string;
+  range: string;
+  risk: string;
+  selection: string;
+  excluded_vehicles: Array<{ vehicle_id: string; vehicle_name: string; reasons: string[] }>;
+  vehicles_evaluated: number;
+  vehicles_dispatched: number;
+}
+
+/** A driver/manager-reported path blockage (circle no-go zone). */
+export interface RouteObstacle {
+  obstacle_id: string;
+  obstacle_type: string;
+  description?: string | null;
+  latitude: number;
+  longitude: number;
+  radius_km: number;
+  reported_by?: string | null;
+  vehicle_id?: string | null;
+  status: 'ACTIVE' | 'RESOLVED';
+  created_at?: string | null;
+  resolved_at?: string | null;
+}
+
+/** Per-route record of the blockages an optimized route steers around. */
+export interface ObstacleAvoidance {
+  obstacle_id: string;
+  obstacle_type: string;
+  latitude: number;
+  longitude: number;
+  radius_km: number;
+}
+
 export interface RouteLocation {
   name?: string | null;
   city?: string | null;
@@ -207,14 +280,123 @@ export interface RouteItem {
   total_distance_km: number;
   fuel_estimate_liters: number;
   carbon_emissions_kg: number;
+  /** Operating cost for this tour (USD) — part of the cost/carbon ledger. */
+  cost_usd?: number;
+  /** Business-constraint audit: why this vehicle, who was screened out. */
+  vehicle_selection?: VehicleSelection;
   stops: RouteStop[];
   status: string;
   start_location?: RouteLocation | null;
   end_location?: RouteLocation | null;
+  /** Obstacle-aware path (depot + detour via-points + stops) for drawing. */
+  geometry?: Array<[number, number]>;
+  /** Blockages this route was re-optimized around. */
+  obstacles_avoided?: ObstacleAvoidance[];
+}
+
+/** Full payload of POST /routes/optimize. */
+export interface OptimizeResult {
+  routes: RouteItem[];
+  total_distance_km: number;
+  total_fuel_liters?: number;
+  total_carbon_kg?: number;
+  total_cost_usd?: number;
+  solver_engine: string;
+  obstacles_considered?: number;
+  comparison?: RouteComparison | null;
+  constraint_report?: ConstraintReport | null;
+  ledger_run_id?: string | null;
+  status: string;
+  message?: string;
+}
+
+/** One durable cost/carbon ledger row (GET /routes/ledger). */
+export interface RouteLedgerEntry {
+  id: string;
+  run_id: string;
+  created_at: string | null;
+  scope: 'OPTIMIZE' | 'DISPATCH' | 'DRIVER_REROUTE' | string;
+  route_id: string;
+  vehicle_id: string | null;
+  distance_km: number;
+  fuel_liters: number;
+  carbon_kg: number;
+  cost_usd: number;
+  solver_engine: string | null;
+  detail?: { stops?: number; obstacles_avoided?: number; vehicle_selection_status?: string } | null;
+}
+
+export interface RouteLedgerResult {
+  entries: RouteLedgerEntry[];
+  count: number;
+  totals: {
+    runs: number;
+    routes_logged: number;
+    distance_km: number;
+    fuel_liters: number;
+    carbon_kg: number;
+    cost_usd: number;
+  };
+}
+
+/** A transfer trip planned from an LP recommendation (Feature: dispatch). */
+export interface TransferTrip {
+  recommendation: TransferRecommendation;
+  trip: RouteItem & {
+    source_warehouse_id: string;
+    source_warehouse_name: string;
+    destination_warehouse_id: string;
+    destination_warehouse_name: string;
+    sku?: string;
+    quantity?: number;
+  };
+}
+
+export interface DispatchResult {
+  status: string;
+  message: string;
+  lp_status?: string;
+  trips: TransferTrip[];
+  total_distance_km: number;
+  total_cost_usd: number;
+  total_carbon_kg: number;
+  constraint_report?: ConstraintReport | null;
+  ledger_run_id?: string | null;
+}
+
+/** One Copilot audit-trail entry (GET /copilot/audit). */
+export interface CopilotAuditEntry {
+  id: string;
+  created_at: string | null;
+  query: string;
+  intent: string;
+  answer_preview: string | null;
+  suggested_actions: Array<{ label: string; action: string; params: any }>;
+}
+
+/** Result of POST /driver/report-obstacle — obstacle + immediate re-route. */
+export interface ObstacleReportResult {
+  status: string;
+  driver_id?: string;
+  obstacle: RouteObstacle;
+  reroute: {
+    previous_order: string[];
+    new_order: string[];
+    stops_resequenced: boolean;
+    straight_remaining_km: number;
+    previous_remaining_km: number;
+    new_remaining_km: number;
+    obstacles_avoided: ObstacleAvoidance[];
+    solver_engine?: string;
+    message?: string;
+  };
+  updated_shift: DriverActiveRoute;
 }
 
 export interface CopilotResponse {
   query: string;
+  /** Routed intent label (FLEET_HEALTH, INVENTORY_REBALANCE, SIMULATION, …). */
+  intent?: string;
   answer: string;
   citations: Array<{ document_id: string; title: string; type: string; excerpt: string }>;
   suggested_actions: Array<{ label: string; action: string; params: any }>;

@@ -195,3 +195,67 @@ class MaintenanceLog(Base):
     status = Column(String(20), default="IN_PROGRESS")
     failure_risk_score = Column(Float, default=0.0)
     description = Column(Text)
+
+
+class RouteObstacle(Base):
+    """Driver-reported blockage on a path segment.
+
+    Modelled as a circle (center lat/lng + radius_km). ACTIVE obstacles are
+    fed into VRPOptimizer so Clarke-Wright savings and 2-Opt re-route around
+    them; RESOLVED ones are kept for history once the blockage clears.
+    """
+
+    __tablename__ = "route_obstacles"
+    obstacle_id = Column(String(36), primary_key=True, default=generate_uuid)
+    obstacle_type = Column(String(40), nullable=False)  # ROAD_CLOSED / ACCIDENT / FLOODING / ...
+    description = Column(String(255))
+    latitude = Column(Float, nullable=False)
+    longitude = Column(Float, nullable=False)
+    radius_km = Column(Float, nullable=False, default=2.0)
+    reported_by = Column(String(50))   # driver id, e.g. DRV-01
+    vehicle_id = Column(String(50))    # reporting driver's vehicle, e.g. V-101
+    status = Column(String(20), default="ACTIVE")  # ACTIVE / RESOLVED
+    created_at = Column(DateTime, default=datetime.utcnow)
+    resolved_at = Column(DateTime, nullable=True)
+
+
+class RouteLedger(Base):
+    """Cost/carbon ledger entry — one row per route produced by a solver run.
+
+    Written on every successful POST /routes/optimize (and inventory dispatch),
+    giving the fleet a durable audit of distance, fuel, CO2 and USD per route
+    instead of numbers that vanish with the response payload.
+    """
+
+    __tablename__ = "route_ledger"
+
+    id = Column(String(36), primary_key=True, default=generate_uuid)
+    run_id = Column(String(36), index=True)          # groups all routes from one solve
+    created_at = Column(DateTime, default=datetime.utcnow, index=True)
+    scope = Column(String(30), default="OPTIMIZE")   # OPTIMIZE / DISPATCH / DRIVER_REROUTE
+    route_id = Column(String(80), nullable=False)
+    vehicle_id = Column(String(50), nullable=True)
+    distance_km = Column(Float, default=0.0)
+    fuel_liters = Column(Float, default=0.0)
+    carbon_kg = Column(Float, default=0.0)
+    cost_usd = Column(Float, default=0.0)
+    solver_engine = Column(String(200), nullable=True)
+    detail = Column(Text, nullable=True)             # JSON: stops count, obstacles avoided, …
+
+
+class CopilotAuditLog(Base):
+    """Immutable audit trail of every Copilot query + the action it suggested.
+
+    The audit is written by POST /copilot/ask before the response is returned,
+    so answered questions and machine-triggered actions stay reviewable.
+    """
+
+    __tablename__ = "copilot_audit_log"
+
+    id = Column(String(36), primary_key=True, default=generate_uuid)
+    created_at = Column(DateTime, default=datetime.utcnow, index=True)
+    query = Column(Text, nullable=False)
+    intent = Column(String(60), default="GENERAL")
+    answer_preview = Column(String(500), nullable=True)
+    actions_json = Column(Text, nullable=True)       # JSON list of suggested actions
+    executed_action = Column(String(60), nullable=True)

@@ -1,7 +1,7 @@
 ﻿import { useState, useEffect, useMemo } from 'react';
-import type { WarehouseItem, InventoryItem, RebalanceResult, TransferRecommendation } from '../types';
-import { fetchInventory, rebalanceInventory, shiftInventory } from '../services/api';
-import { Warehouse, RefreshCw, AlertTriangle, ArrowRightLeft, PackageCheck, Search, ChevronDown, ChevronUp, CheckCircle2, Star, Boxes } from 'lucide-react';
+import type { WarehouseItem, InventoryItem, RebalanceResult, TransferRecommendation, TransferTrip, DispatchResult } from '../types';
+import { fetchInventory, rebalanceInventory, shiftInventory, dispatchTransferTrips } from '../services/api';
+import { Warehouse, RefreshCw, AlertTriangle, ArrowRightLeft, PackageCheck, Search, ChevronDown, ChevronUp, CheckCircle2, Star, Boxes, Truck } from 'lucide-react';
 
 interface WarehouseHubProps {
   warehouses: WarehouseItem[];
@@ -22,6 +22,10 @@ export const WarehouseHub: React.FC<WarehouseHubProps> = ({ warehouses, onChange
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
   const [visibleCount, setVisibleCount] = useState(PAGE_SIZE);
   const [applying, setApplying] = useState<string | null>(null);
+  const [dispatchData, setDispatchData] = useState<DispatchResult | null>(null);
+  const [dispatchLoading, setDispatchLoading] = useState(false);
+  const [dispatchError, setDispatchError] = useState<string | null>(null);
+  const [dispatchNotice, setDispatchNotice] = useState<string | null>(null);
 
   const whName = (id: string) => warehouses.find(w => w.id === id)?.name || id;
 
@@ -48,6 +52,29 @@ export const WarehouseHub: React.FC<WarehouseHubProps> = ({ warehouses, onChange
       setError(e.message || 'LP optimizer failed - check backend and retry');
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleDispatchTransferTrips = async () => {
+    setDispatchLoading(true);
+    setDispatchError(null);
+    setDispatchNotice(null);
+    try {
+      const res = await dispatchTransferTrips();
+      setDispatchData(res);
+      const trips = res.trips || [];
+      setDispatchNotice(
+        trips.length === 0 ? 'No transfer trips needed - inventory is balanced.' : `Scheduled ${trips.length} transfer trip${trips.length > 1 ? 's' : ''}.`
+      );
+      if (res.status === 'OPTIMAL') {
+        // Refresh inventory + rebalance so the hub cards reflect the new stock plan.
+        await loadAll();
+        await handleRebalance();
+      }
+    } catch (e: any) {
+      setDispatchError(e.message || 'Failed to dispatch transfer trips - check backend and retry');
+    } finally {
+      setDispatchLoading(false);
     }
   };
 
@@ -122,6 +149,13 @@ export const WarehouseHub: React.FC<WarehouseHubProps> = ({ warehouses, onChange
         >
           <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
           <span>{loading ? 'Running PuLP LP Solver...' : 'Trigger PuLP LP Rebalance'}</span>
+        </button>
+        <button
+          onClick={handleDispatchTransferTrips}
+          disabled={dispatchLoading || loading}
+          className="px-5 py-2.5 rounded-xl bg-gradient-to-r from-sky-500 to-indigo-600 hover:from-sky-400 hover:to-indigo-500 text-white text-xs font-semibold flex items-center gap-2 disabled:opacity-50">
+          <Truck className={`w-4 h-4 ${dispatchLoading ? 'animate-spin' : ''}`} />
+          <span>{dispatchLoading ? 'Scheduling trips...' : 'Create Transfer Trips'}</span>
         </button>
       </div>
 
@@ -357,6 +391,53 @@ export const WarehouseHub: React.FC<WarehouseHubProps> = ({ warehouses, onChange
                 );
               })}
             </div>
+          )}
+        </div>
+      )}
+      {dispatchData && (
+        <div className="glass-panel p-4 rounded-2xl border border-gray-800">
+          <div className="flex items-center gap-2 mb-3">
+            <Truck className="w-4 h-4 text-sky-400 shrink-0" />
+            <h4 className="text-xs font-bold text-white">Dispatched Transfer Trips</h4>
+          </div>
+          <p className="text-xs text-gray-500 mb-2">
+            Status: <span className="text-emerald-400 font-semibold">{dispatchData.status}</span>{' '}
+            {dispatchData.total_cost_usd != null && (
+              <>· Total: {currency}{Number(dispatchData.total_cost_usd).toLocaleString('en-IN', { maximumFractionDigits: 2 })}</>
+            )}
+          </p>
+          {dispatchError && (
+            <p className="text-xs text-red-300 mb-3">{dispatchError}</p>
+          )}
+          {(dispatchData.trips || []).length === 0 && dispatchNotice ? (
+            <p className="text-xs text-emerald-300">
+              <CheckCircle2 className="w-3 h-3 shrink-0 mt-0.5" /> {dispatchNotice}
+            </p>
+          ) : (
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+              {(dispatchData.trips || []).map((trip: TransferTrip, idx: number) => {
+                const t = trip.trip;
+                const rec = trip.recommendation;
+                return (
+                  <div key={idx} className="glass-card p-3 rounded-xl space-y-1.5 border border-gray-800">
+                    <div className="flex justify-between text-xs">
+                      <span className="font-bold text-sky-400 font-mono">TRIP {idx + 1}</span>
+                      <span className="text-[10px] px-1.5 py-0.5 rounded bg-sky-500/10 text-sky-400 border border-sky-500/30">{t.vehicle_name}</span>
+                    </div>
+                    <div className="text-xs text-gray-300 leading-snug">
+                      {t.source_warehouse_name || t.start_location?.label} → {t.destination_warehouse_name || t.end_location?.label}<br />
+                      <span className="text-amber-400 font-medium">{t.quantity} units × {t.sku}</span> · {t.total_distance_km?.toFixed(1)} km · est. {t.cost_usd != null ? currency + Number(t.cost_usd).toLocaleString('en-IN', { maximumFractionDigits: 2 }) : '—'}
+                    </div>
+                    <p className="text-[10px] text-gray-500 italic">{rec.rationale}</p>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+          {dispatchNotice && (dispatchData.trips || []).length > 0 && (
+            <p className="text-xs text-emerald-300 mt-3">
+              <CheckCircle2 className="w-3 h-3 shrink-0 mt-0.5" /> {dispatchNotice}
+            </p>
           )}
         </div>
       )}

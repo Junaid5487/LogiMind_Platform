@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import type { RouteItem, RouteLocation, WarehouseItem, VehicleItem } from '../types';
-import { RefreshCw, Navigation, Zap, CheckCircle2, Route as RouteIcon, MapPin, Flag, CircleDot } from 'lucide-react';
-import { MapContainer, TileLayer, Marker, Popup, Polyline, useMap } from 'react-leaflet';
+import type { RouteItem, RouteLocation, WarehouseItem, VehicleItem, RouteObstacle, RouteComparison, ConstraintReport } from '../types';
+import { RefreshCw, Navigation, Zap, CheckCircle2, Route as RouteIcon, MapPin, Flag, CircleDot, Construction, ShieldCheck } from 'lucide-react';
+import { MapContainer, TileLayer, Marker, Popup, Polyline, Circle, useMap } from 'react-leaflet';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import { SavingsBanner } from './SavingsBanner';
@@ -11,6 +11,12 @@ interface LiveRouteMapProps {
   vehicles: VehicleItem[];
   routes: RouteItem[];
   defaultRoutes: RouteItem[];
+  /** Driver-reported path obstacles drawn as red no-go zones on the map. */
+  obstacles?: RouteObstacle[];
+  /** Naive-vs-optimized fleet-wide savings from last optimize run. */
+  routeComparison?: RouteComparison | null;
+  /** Constraint audit: excluded vehicles + cheapest-feasible-vehicle selection policy. */
+  constraintReport?: ConstraintReport | null;
   onOptimize: (vehicleId?: string) => void;
   isOptimizing: boolean;
   solverEngine?: string;
@@ -133,8 +139,9 @@ const FitRouteBounds: React.FC<{ points: LatLng[] }> = ({ points }) => {
   return null;
 };
 
-export const LiveRouteMap: React.FC<LiveRouteMapProps> = ({ warehouses, vehicles, routes, defaultRoutes, onOptimize, isOptimizing, solverEngine, totalDistanceKm, defaultDistanceKm, lastRunAt, optimizedAtLeastOnce, selectedVehicleId = 'ALL', onSelectVehicle, planner }) => {
+export const LiveRouteMap: React.FC<LiveRouteMapProps> = ({ warehouses, vehicles, routes, defaultRoutes, obstacles = [], routeComparison = null, constraintReport = null, onOptimize, isOptimizing, solverEngine, totalDistanceKm, defaultDistanceKm, lastRunAt, optimizedAtLeastOnce, selectedVehicleId = 'ALL', onSelectVehicle, planner }) => {
   const [selectedRoute, setSelectedRoute] = useState<RouteItem | null>(null);
+  const activeObstacles = useMemo(() => obstacles.filter((o) => o.status === 'ACTIVE'), [obstacles]);
 
   const activeVehicle = selectedVehicleId && selectedVehicleId !== 'ALL' ? selectedVehicleId : 'ALL';
   // When a single vehicle is picked, spotlight only its route(s) + marker on the map.
@@ -161,6 +168,12 @@ export const LiveRouteMap: React.FC<LiveRouteMapProps> = ({ warehouses, vehicles
     const depotPt: LatLng | null = depot ? [depot.location_lat, depot.location_lng] : null;
     const out: Record<string, LatLng[]> = {};
     const collect = (route: RouteItem) => {
+      // Backend obstacle-aware geometry (depot + detour via-points + stops)
+      // wins when present so the drawn path visibly steers around blockages.
+      if (Array.isArray(route.geometry) && route.geometry.length >= 2) {
+        out[route.route_id] = route.geometry;
+        return;
+      }
       const validStops = (route.stops || []).filter(
         (s) => typeof s.dest_lat === 'number' && typeof s.dest_lng === 'number' && !isNaN(s.dest_lat) && !isNaN(s.dest_lng)
       );
@@ -287,7 +300,26 @@ export const LiveRouteMap: React.FC<LiveRouteMapProps> = ({ warehouses, vehicles
 
       {planner}
 
-      <SavingsBanner defaultKm={defaultDistanceKm} optimizedKm={totalDistanceKm} visible={optimizedAtLeastOnce} />
+      <SavingsBanner defaultKm={defaultDistanceKm} optimizedKm={totalDistanceKm} visible={optimizedAtLeastOnce} comparison={routeComparison} />
+
+      {constraintReport && (
+        <div className="glass-panel px-4 py-3 rounded-2xl border border-gray-800 flex items-start gap-3 text-xs text-gray-300">
+          <ShieldCheck className="w-4 h-4 text-sky-400 shrink-0 mt-0.5" />
+          <div className="flex-1 min-w-0">
+            <p className="font-semibold text-sky-300">Constraint routing audit</p>
+            <p className="text-[10px] leading-snug mt-0.5">
+              {constraintReport.vehicles_dispatched} of {constraintReport.vehicles_evaluated} vehicles dispatched
+              {constraintReport.excluded_vehicles.length > 0 && (
+                <span className="text-rose-400 ml-2">· {constraintReport.excluded_vehicles.length} excluded</span>
+              )}
+            </p>
+            <p className="text-[10px] text-gray-500 mt-1 italic">
+              {constraintReport.selection}{' '}
+              {constraintReport.excluded_vehicles.map((v) => `${v.vehicle_name}: ${v.reasons.join('; ')}`).join('; ')}
+            </p>
+          </div>
+        </div>
+      )}
 
       <div className="glass-panel p-4 rounded-2xl flex items-center gap-3 text-xs">
         <div className="w-9 h-9 rounded-xl bg-gradient-to-tr from-gray-500 to-gray-700 flex items-center justify-center shadow-lg shrink-0">
@@ -300,6 +332,11 @@ export const LiveRouteMap: React.FC<LiveRouteMapProps> = ({ warehouses, vehicles
           <p className="mt-0.5 flex items-center gap-2 flex-wrap">
             <span className="inline-block w-8 border-t-2 border-dashed border-gray-400" /> grey dashed = current default
             <span className="inline-block w-8 border-t-2 border-sky-400 ml-2" /> solid = optimized
+            {activeObstacles.length > 0 && (
+              <span className="inline-flex items-center gap-1 ml-2">
+                <span className="inline-block w-3 h-3 rounded-full bg-rose-500/30 border-2 border-rose-500" /> reported obstacle
+              </span>
+            )}
           </p>
         </div>
       </div>
@@ -333,6 +370,34 @@ export const LiveRouteMap: React.FC<LiveRouteMapProps> = ({ warehouses, vehicles
                   </div>
                 </Popup>
               </Marker>
+            ))}
+
+            {/* Driver-reported obstacles: red dashed no-go zones the optimizer avoids */}
+            {activeObstacles.map((ob) => (
+              <Circle
+                key={ob.obstacle_id}
+                center={[ob.latitude, ob.longitude]}
+                radius={ob.radius_km * 1000}
+                pathOptions={{
+                  color: '#fb7185',
+                  weight: 2,
+                  dashArray: '6, 6',
+                  fillColor: '#ef4444',
+                  fillOpacity: 0.15,
+                }}
+              >
+                <Popup>
+                  <div className="p-1">
+                    <h4 className="font-bold text-rose-600 text-sm flex items-center gap-1">
+                      <Construction className="w-3.5 h-3.5" /> {(ob.obstacle_type || 'OTHER').replace(/_/g, ' ')}
+                    </h4>
+                    <p className="text-xs text-gray-700">{ob.description || 'No description'}</p>
+                    <p className="text-[11px] text-gray-500 mt-1">
+                      ~{Number(ob.radius_km) || 0} km no-go zone{ob.reported_by ? ` · reported by ${ob.reported_by}` : ''}
+                    </p>
+                  </div>
+                </Popup>
+              </Circle>
             ))}
 
             {/* Grey dashed baseline (road-snapped when available) */}
@@ -416,6 +481,12 @@ export const LiveRouteMap: React.FC<LiveRouteMapProps> = ({ warehouses, vehicles
                 <div>Focused Vehicle: <span className="font-semibold text-emerald-300">{activeVehicle}</span></div>
               )}
               <div>Total Active Routes: <span className="font-semibold text-white">{visibleRoutes.length}</span></div>
+              {activeObstacles.length > 0 && (
+                <div>
+                  Active Obstacles: <span className="font-semibold text-rose-400">{activeObstacles.length}</span>
+                  <span className="text-rose-300/70"> (optimizer avoids these zones)</span>
+                </div>
+              )}
               {typeof totalDistanceKm === 'number' && (
                 <div>Total Distance: <span className="font-semibold text-sky-400">{totalDistanceKm.toFixed(1)} km</span></div>
               )}
@@ -445,11 +516,47 @@ export const LiveRouteMap: React.FC<LiveRouteMapProps> = ({ warehouses, vehicles
                     : 'bg-gray-900/40 border-gray-800 hover:border-gray-700'
                 }`}
               >
-                <div className="flex items-center justify-between">
+                <div className="flex items-center justify-between gap-2 flex-wrap">
                   <span className="text-xs font-bold text-sky-400">{route.route_id}</span>
-                  <span className="text-[10px] px-2 py-0.5 rounded bg-emerald-500/10 text-emerald-400 font-medium">
-                    {route.stops.length} STOPS
-                  </span>
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-[10px] px-2 py-0.5 rounded bg-emerald-500/10 text-emerald-400 font-medium">
+                      {route.stops.length} STOPS
+                    </span>
+                    {!!route.obstacles_avoided?.length && (
+                      <span
+                        className="text-[10px] px-2 py-0.5 rounded bg-rose-500/15 text-rose-300 font-bold border border-rose-500/30"
+                        title={route.obstacles_avoided.map((a) => (a?.obstacle_type || 'OTHER').replace(/_/g, ' ')).join(', ')}
+                      >
+                        AVOIDS {route.obstacles_avoided.length} OBSTACLE{route.obstacles_avoided.length > 1 ? 'S' : ''}
+                      </span>
+                    )}
+                    {route.vehicle_selection && (
+                      <>
+                        <span
+                          className={`text-[10px] px-2 py-0.5 rounded font-bold border ${route.vehicle_selection.status === 'FEASIBLE' ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30' : 'bg-rose-500/10 text-rose-400 border-rose-500/30'}`}
+                          title={route.vehicle_selection.reason}
+                        >
+                          {route.vehicle_selection.status === 'FEASIBLE' ? 'CHEAPEST FEASIBLE VEHICLE' : 'RANGE/RISK VIOLATED'}
+                        </span>
+                        {route.vehicle_selection.failure_risk_pct != null && route.vehicle_selection.failure_risk_pct >= 50 && (
+                          <span
+                            className="text-[10px] px-2 py-0.5 rounded bg-amber-500/10 text-amber-400 font-bold border border-amber-500/30"
+                            title="Failure risk above 50%"
+                          >
+                            RISK {route.vehicle_selection.failure_risk_pct}%
+                          </span>
+                        )}
+                        {route.vehicle_selection.rejected_candidates?.length && (
+                          <span
+                            className="text-[10px] px-2 py-0.5 rounded bg-gray-500/10 text-gray-400 font-bold border border-gray-600/30"
+                            title={route.vehicle_selection.rejected_candidates.map((c) => c.reasons.join('; ')).join(' · ')}
+                          >
+                            {route.vehicle_selection.rejected_candidates.length} VEHICLE{route.vehicle_selection.rejected_candidates.length > 1 ? 'S' : ''} SCREENED OUT
+                          </span>
+                        )}
+                      </>
+                    )}
+                  </div>
                 </div>
                 <div className="text-xs text-white font-medium mt-1">{route.vehicle_name} ({route.vehicle_id})</div>
                 <div className="mt-2 space-y-1.5 rounded-lg bg-gray-950/60 border border-gray-800/80 px-2.5 py-2">
