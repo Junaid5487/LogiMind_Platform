@@ -1,10 +1,12 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import type { RouteItem, RouteLocation, WarehouseItem, VehicleItem, RouteObstacle, RouteComparison, ConstraintReport } from '../types';
-import { RefreshCw, Navigation, Zap, CheckCircle2, Route as RouteIcon, MapPin, Flag, CircleDot, Construction, ShieldCheck } from 'lucide-react';
+import { RefreshCw, Navigation, Zap, CheckCircle2, Route as RouteIcon, MapPin, Flag, CircleDot, Construction, ShieldCheck, Plus, X, AlertTriangle, AlertOctagon } from 'lucide-react';
 import { MapContainer, TileLayer, Marker, Popup, Polyline, Circle, useMap } from 'react-leaflet';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import { SavingsBanner } from './SavingsBanner';
+import { reportDriverObstacle, resolveObstacle } from '../services/api';
+
 
 interface LiveRouteMapProps {
   warehouses: WarehouseItem[];
@@ -139,11 +141,71 @@ const FitRouteBounds: React.FC<{ points: LatLng[] }> = ({ points }) => {
   return null;
 };
 
+const OBSTACLE_PRESETS = [
+  { name: 'Accident on Mumbai-Pune Expressway (NH-48)', type: 'ACCIDENT', lat: 18.7500, lng: 73.4000, radius: 8, desc: 'Overturned cargo truck blocking both eastbound lanes.' },
+  { name: 'Highway Flooding near Delhi-Jaipur (NH-48)', type: 'FLOODING', lat: 27.8000, lng: 76.2500, radius: 12, desc: 'Seasonal waterlogging on low-lying corridor.' },
+  { name: 'Bridge Maintenance on Kolkata-Durgapur Expressway', type: 'CONSTRUCTION', lat: 22.8500, lng: 88.0000, radius: 6, desc: 'Lane restriction for expansion joint replacement.' },
+  { name: 'Western Ghats Landslide (NH-66)', type: 'ROAD_CLOSED', lat: 16.5000, lng: 73.8000, radius: 10, desc: 'Rockfall blocking highway bypass.' },
+];
+
 export const LiveRouteMap: React.FC<LiveRouteMapProps> = ({ warehouses, vehicles, routes, defaultRoutes, obstacles = [], routeComparison = null, constraintReport = null, onOptimize, isOptimizing, solverEngine, totalDistanceKm, defaultDistanceKm, lastRunAt, optimizedAtLeastOnce, selectedVehicleId = 'ALL', onSelectVehicle, planner }) => {
   const [selectedRoute, setSelectedRoute] = useState<RouteItem | null>(null);
-  const activeObstacles = useMemo(() => obstacles.filter((o) => o.status === 'ACTIVE'), [obstacles]);
+  const [localObstacles, setLocalObstacles] = useState<RouteObstacle[]>(obstacles);
+  useEffect(() => { setLocalObstacles(obstacles); }, [obstacles]);
+
+  const [isObstacleModalOpen, setIsObstacleModalOpen] = useState(false);
+  const [obType, setObType] = useState('ACCIDENT');
+  const [obLat, setObLat] = useState('18.7500');
+  const [obLng, setObLng] = useState('73.4000');
+  const [obRadius, setObRadius] = useState(8);
+  const [obDesc, setObDesc] = useState('Accident blocking expressway lanes');
+  const [isSubmittingOb, setIsSubmittingOb] = useState(false);
+
+  const activeObstacles = useMemo(() => localObstacles.filter((o) => o.status === 'ACTIVE'), [localObstacles]);
+
+  const handleApplyPreset = (p: typeof OBSTACLE_PRESETS[0]) => {
+    setObType(p.type);
+    setObLat(p.lat.toString());
+    setObLng(p.lng.toString());
+    setObRadius(p.radius);
+    setObDesc(p.desc);
+  };
+
+  const handleCreateObstacle = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setIsSubmittingOb(true);
+    try {
+      const res = await reportDriverObstacle('DISPATCHER', {
+        obstacle_type: obType,
+        latitude: parseFloat(obLat),
+        longitude: parseFloat(obLng),
+        radius_km: obRadius,
+        description: obDesc,
+      });
+      if (res?.obstacle) {
+        setLocalObstacles(prev => [res.obstacle, ...prev]);
+      }
+      setIsObstacleModalOpen(false);
+      onOptimize(activeVehicle);
+    } catch (err) {
+      console.error('Failed to report obstacle:', err);
+    } finally {
+      setIsSubmittingOb(false);
+    }
+  };
+
+  const handleResolveObstacle = async (obstacleId: string) => {
+    try {
+      await resolveObstacle(obstacleId);
+      setLocalObstacles(prev => prev.filter(o => o.obstacle_id !== obstacleId));
+      onOptimize(activeVehicle);
+    } catch (err) {
+      console.error('Failed to resolve obstacle:', err);
+    }
+  };
 
   const activeVehicle = selectedVehicleId && selectedVehicleId !== 'ALL' ? selectedVehicleId : 'ALL';
+
   // When a single vehicle is picked, spotlight only its route(s) + marker on the map.
   const visibleRoutes = activeVehicle === 'ALL' ? routes : routes.filter((r) => r.vehicle_id === activeVehicle);
   const visibleDefaultRoutes = activeVehicle === 'ALL' ? defaultRoutes : defaultRoutes.filter((r) => r.vehicle_id === activeVehicle);
@@ -268,6 +330,14 @@ export const LiveRouteMap: React.FC<LiveRouteMapProps> = ({ warehouses, vehicles
             })}
           </select>
           <button
+            onClick={() => setIsObstacleModalOpen(true)}
+            className="px-4 py-2.5 rounded-xl bg-rose-500/20 hover:bg-rose-500/30 text-rose-300 border border-rose-500/30 text-xs font-semibold shadow-lg shadow-rose-500/10 transition-all flex items-center gap-1.5"
+            title="Place a road blockage or accident zone on the corridor"
+          >
+            <AlertTriangle className="w-4 h-4 text-rose-400" />
+            <span>Report Obstacle</span>
+          </button>
+          <button
             onClick={() => onOptimize(activeVehicle)}
             disabled={isOptimizing}
             className="px-5 py-2.5 rounded-xl bg-gradient-to-r from-sky-500 to-indigo-600 hover:from-sky-400 hover:to-indigo-500 text-white text-xs font-semibold shadow-lg shadow-sky-500/20 transition-all flex items-center gap-2 disabled:opacity-50"
@@ -277,6 +347,34 @@ export const LiveRouteMap: React.FC<LiveRouteMapProps> = ({ warehouses, vehicles
           </button>
         </div>
       </div>
+
+      {activeObstacles.length > 0 && (
+        <div className="glass-panel p-3.5 rounded-2xl border border-rose-500/30 bg-rose-950/20 flex flex-wrap items-center justify-between gap-3 text-xs">
+          <div className="flex items-center gap-2 flex-wrap">
+            <span className="font-bold text-rose-400 flex items-center gap-1.5">
+              <Construction className="w-4 h-4" />
+              Active Road Obstacles ({activeObstacles.length}):
+            </span>
+            {activeObstacles.map((ob) => (
+              <span key={ob.obstacle_id} className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-rose-500/20 border border-rose-500/40 text-rose-200 text-[11px]">
+                <span className="font-semibold">{ob.obstacle_type.replace(/_/g, ' ')}</span>
+                <span className="text-gray-400">({ob.radius_km} km zone)</span>
+                <button
+                  onClick={() => handleResolveObstacle(ob.obstacle_id)}
+                  title="Mark obstacle cleared and re-optimize"
+                  className="ml-1 text-rose-300 hover:text-white hover:bg-rose-600/50 rounded p-0.5"
+                >
+                  <X className="w-3 h-3" />
+                </button>
+              </span>
+            ))}
+          </div>
+          <span className="text-[11px] text-rose-300/80 italic">
+            *Routes automatically re-sequence and detour via safe waypoints around these zones.
+          </span>
+        </div>
+      )}
+
 
       {activeVehicle !== 'ALL' && (
         <div className="glass-panel px-4 py-2.5 rounded-2xl text-xs text-emerald-300 border border-emerald-500/25 flex items-center gap-2">
@@ -579,6 +677,138 @@ export const LiveRouteMap: React.FC<LiveRouteMapProps> = ({ warehouses, vehicles
           </div>
         </div>
       </div>
+
+      {/* Report Road Obstacle Modal */}
+      {isObstacleModalOpen && (
+        <div className="fixed inset-0 z-[2000] bg-black/75 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-gray-900 border border-rose-500/30 rounded-2xl max-w-lg w-full p-6 space-y-4 shadow-2xl relative">
+            <button
+              onClick={() => setIsObstacleModalOpen(false)}
+              className="absolute top-4 right-4 text-gray-400 hover:text-white"
+            >
+              <X className="w-5 h-5" />
+            </button>
+
+            <div className="flex items-center gap-2">
+              <div className="p-2 rounded-xl bg-rose-500/20 text-rose-400">
+                <AlertTriangle className="w-5 h-5" />
+              </div>
+              <div>
+                <h3 className="text-base font-bold text-white">Report Corridor Obstacle</h3>
+                <p className="text-xs text-gray-400">Place an active blockage on the map. VRP solver re-routes around it.</p>
+              </div>
+            </div>
+
+            {/* Presets */}
+            <div>
+              <label className="text-[11px] font-semibold text-gray-400 uppercase tracking-wider block mb-1.5">
+                Quick Indian Highway Presets:
+              </label>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                {OBSTACLE_PRESETS.map((p, idx) => (
+                  <button
+                    key={idx}
+                    type="button"
+                    onClick={() => handleApplyPreset(p)}
+                    className="p-2 rounded-xl bg-gray-800/70 hover:bg-rose-500/10 border border-gray-700/80 hover:border-rose-500/40 text-left transition-all"
+                  >
+                    <div className="text-[11px] font-bold text-white truncate">{p.name}</div>
+                    <div className="text-[10px] text-gray-400">{p.type} · {p.radius} km zone</div>
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <form onSubmit={handleCreateObstacle} className="space-y-3 pt-2 border-t border-gray-800">
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="text-xs font-semibold text-gray-300 block mb-1">Obstacle Type</label>
+                  <select
+                    value={obType}
+                    onChange={(e) => setObType(e.target.value)}
+                    className="w-full px-3 py-2 rounded-xl bg-gray-800 border border-gray-700 text-xs text-white outline-none focus:border-rose-500"
+                  >
+                    <option value="ACCIDENT">Accident</option>
+                    <option value="FLOODING">Flooding / Waterlogging</option>
+                    <option value="CONSTRUCTION">Construction Work</option>
+                    <option value="ROAD_CLOSED">Road Closed</option>
+                    <option value="TRAFFIC_JAM">Heavy Traffic</option>
+                    <option value="OTHER">Other Hazard</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="text-xs font-semibold text-gray-300 block mb-1">Detour Radius: {obRadius} km</label>
+                  <input
+                    type="range"
+                    min="1"
+                    max="20"
+                    step="1"
+                    value={obRadius}
+                    onChange={(e) => setObRadius(parseInt(e.target.value, 10))}
+                    className="w-full accent-rose-500 mt-2"
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="text-xs font-semibold text-gray-300 block mb-1">Latitude</label>
+                  <input
+                    type="number"
+                    step="0.0001"
+                    value={obLat}
+                    onChange={(e) => setObLat(e.target.value)}
+                    className="w-full px-3 py-2 rounded-xl bg-gray-800 border border-gray-700 text-xs text-white outline-none focus:border-rose-500"
+                    required
+                  />
+                </div>
+                <div>
+                  <label className="text-xs font-semibold text-gray-300 block mb-1">Longitude</label>
+                  <input
+                    type="number"
+                    step="0.0001"
+                    value={obLng}
+                    onChange={(e) => setObLng(e.target.value)}
+                    className="w-full px-3 py-2 rounded-xl bg-gray-800 border border-gray-700 text-xs text-white outline-none focus:border-rose-500"
+                    required
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="text-xs font-semibold text-gray-300 block mb-1">Description / Location Note</label>
+                <input
+                  type="text"
+                  value={obDesc}
+                  onChange={(e) => setObDesc(e.target.value)}
+                  placeholder="e.g. Overturned trailer near toll plaza"
+                  className="w-full px-3 py-2 rounded-xl bg-gray-800 border border-gray-700 text-xs text-white outline-none focus:border-rose-500"
+                  required
+                />
+              </div>
+
+              <div className="flex items-center justify-end gap-2 pt-3">
+                <button
+                  type="button"
+                  onClick={() => setIsObstacleModalOpen(false)}
+                  className="px-4 py-2 rounded-xl bg-gray-800 hover:bg-gray-700 text-xs text-gray-300 font-semibold"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={isSubmittingOb}
+                  className="px-5 py-2 rounded-xl bg-gradient-to-r from-rose-500 to-amber-600 hover:from-rose-600 hover:to-amber-700 text-white text-xs font-bold shadow-lg shadow-rose-500/20 disabled:opacity-50 flex items-center gap-1.5"
+                >
+                  <AlertTriangle className="w-3.5 h-3.5" />
+                  <span>{isSubmittingOb ? 'Placing & Re-Solving...' : 'Drop Obstacle & Re-Optimize'}</span>
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
+

@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Body
 from pydantic import BaseModel, Field
 from typing import Dict, Any, List, Optional
 from sqlalchemy.orm import Session
@@ -25,6 +25,7 @@ DRIVER_SHIFTS = {
     "DRV-01": {
         "driver_id": "DRV-01",
         "driver_name": "Rahul Sharma",
+        "license_number": "MH-04-2022-0094821",
         "license_number": "MH-04-2022-0094821",
         "vehicle_id": "V-101",
         "vehicle_name": "Tata Prima 5530.S",
@@ -135,6 +136,32 @@ DRIVER_SHIFTS = {
         }
     }
 }
+def authenticate_driver(driver_name: str) -> Optional[Dict[str, Any]]:
+    """Simple driver authentication - username = password = driver_name."""
+    for driver_id, shift in DRIVER_SHIFTS.items():
+        if shift["driver_name"] == driver_name:
+            return shift
+    return None
+
+
+@router.post("/login", response_model=Dict[str, Any])
+def driver_login(driver_name: str = Body(...)):
+    """Simple driver login - username and password are both the driver name."""
+    shift = authenticate_driver(driver_name)
+    if not shift:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid driver credentials",
+        )
+    # Return driver shift data as authenticated session
+    return {
+        "access_token": driver_name,
+        "token_type": "bearer",
+        "driver_id": shift["driver_id"],
+        "driver_name": shift["driver_name"],
+        "vehicle_id": shift.get("vehicle_id"),
+        "vehicle_name": shift.get("vehicle_name"),
+    }
 
 @router.get("/me/route", response_model=Dict[str, Any])
 def get_driver_active_route(driver_id: str = "DRV-01"):
@@ -408,3 +435,10 @@ def report_path_obstacle(
         },
         "updated_shift": shift,
     }
+
+# Role-based credentials
+CREDENTIALS = {
+    'administrator': {'role': 'ADMIN', 'permissions': ['read', 'write', 'delete', 'manage_users']},
+    'fleetmanager': {'role': 'FLEET_MANAGER', 'permissions': ['read', 'write', 'manage_vehicles', 'view_reports']},
+    'warehousemanager': {'role': 'WAREHOUSE_MANAGER', 'permissions': ['read', 'write', 'manage_inventory', 'view_warehouse']},
+}

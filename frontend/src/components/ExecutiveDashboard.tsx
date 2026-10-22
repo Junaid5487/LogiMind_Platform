@@ -173,7 +173,7 @@ export const ExecutiveDashboard: React.FC<ExecutiveDashboardProps> = ({ kpis, ve
           <div className="mt-3">
             <div className="text-3xl font-extrabold text-white">$2,410</div>
             <div className="text-xs text-purple-400 mt-1">
-              {kpis ? `${kpis.co2_savings_tons} tons CO2 reduced` : '24.8 tons CO2 reduced'}
+              {kpis ? `${kpis.dollar_savings} tons CO2 reduced` : '\.90'}
             </div>
           </div>
         </div>

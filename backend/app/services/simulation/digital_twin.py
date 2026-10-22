@@ -23,16 +23,24 @@ class DigitalTwinSimulator:
         base_routes = int(math.ceil(14 * demand_mult))
 
         wh_weights = {
-            "w1111111-1111-1111-1111-111111111111": {"name": "Mumbai Central Hub", "dist_factor": 0.28, "cost_penalty": 2450.0, "sla_penalty": -6.5, "extra_routes": 4},
-            "w2222222-2222-2222-2222-222222222222": {"name": "Navi Mumbai Cargo Center", "dist_factor": 0.18, "cost_penalty": 1680.0, "sla_penalty": -4.2, "extra_routes": 3},
-            "w3333333-3333-3333-3333-333333333333": {"name": "Pune Industrial Hub", "dist_factor": 0.12, "cost_penalty": 1120.0, "sla_penalty": -2.8, "extra_routes": 2}
+            "w1111111-1111-1111-1111-111111111111": {"name": "Mumbai Central Logistics Hub", "dist_factor": 0.28, "cost_penalty": 2450.0, "sla_penalty": -6.5, "extra_routes": 4},
+            "w2222222-2222-2222-2222-222222222222": {"name": "Delhi NCR Distribution Center", "dist_factor": 0.22, "cost_penalty": 1950.0, "sla_penalty": -5.2, "extra_routes": 3},
+            "w3333333-3333-3333-3333-333333333333": {"name": "Bengaluru South Fulfillment Hub", "dist_factor": 0.18, "cost_penalty": 1680.0, "sla_penalty": -4.2, "extra_routes": 3},
+            "w4444444-4444-4444-4444-444444444444": {"name": "Kolkata Port Logistics Centre", "dist_factor": 0.16, "cost_penalty": 1450.0, "sla_penalty": -3.8, "extra_routes": 2},
+            "w5555555-5555-5555-5555-555555555555": {"name": "Chennai Auto & Cargo Terminal", "dist_factor": 0.15, "cost_penalty": 1380.0, "sla_penalty": -3.5, "extra_routes": 2},
+            "w6666666-6666-6666-6666-666666666666": {"name": "Hyderabad Tech & Pharma Gateway", "dist_factor": 0.14, "cost_penalty": 1250.0, "sla_penalty": -3.1, "extra_routes": 2},
+            "w7777777-7777-7777-7777-777777777777": {"name": "Nagpur Zero-Mile Multimodal Cargo Hub", "dist_factor": 0.20, "cost_penalty": 1820.0, "sla_penalty": -4.8, "extra_routes": 3},
         }
 
         veh_weights = {
             "V-101": {"name": "Tata Prima Heavy Truck (V-101)", "dist_factor": 0.14, "cost_penalty": 980.0, "sla_penalty": -3.5, "extra_routes": 2},
             "V-102": {"name": "Mahindra Treo Zor EV (V-102)", "dist_factor": 0.08, "cost_penalty": 520.0, "sla_penalty": -1.8, "extra_routes": 1},
-            "V-104": {"name": "Ashok Leyland BADA DOST (V-104)", "dist_factor": 0.06, "cost_penalty": 410.0, "sla_penalty": -1.4, "extra_routes": 1}
+            "V-103": {"name": "Eicher Pro Heavy Truck (V-103)", "dist_factor": 0.16, "cost_penalty": 1100.0, "sla_penalty": -3.8, "extra_routes": 2},
+            "V-104": {"name": "Ashok Leyland BADA DOST (V-104)", "dist_factor": 0.06, "cost_penalty": 410.0, "sla_penalty": -1.4, "extra_routes": 1},
+            "V-105": {"name": "Tata Ace Gold EV (V-105)", "dist_factor": 0.07, "cost_penalty": 480.0, "sla_penalty": -1.5, "extra_routes": 1},
+            "V-106": {"name": "BharatBenz Heavy Cargo (V-106)", "dist_factor": 0.18, "cost_penalty": 1280.0, "sla_penalty": -4.2, "extra_routes": 2},
         }
+
 
         wh_info = wh_weights.get(disabled_wh)
         veh_info = veh_weights.get(disabled_veh)

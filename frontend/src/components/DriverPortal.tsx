@@ -1,7 +1,10 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import type { DriverActiveRoute, DriverRouteStop, RouteObstacle, ObstacleReportResult } from '../types';
 import { fetchDriverActiveRoute, updateDriverStopStatus, reportDriverObstacle, fetchObstacles, resolveObstacle, fetchDemoCoordinates } from '../services/api';
-import { Truck, RotateCcw, Gauge, Clock, Home, CheckCircle2, AlertTriangle, MapPin, ArrowRight, Timer, Construction, Route as RouteIcon, X, ShieldCheck, Zap } from 'lucide-react';
+import { MapContainer, TileLayer, Marker, Polyline, Circle, Popup, useMap } from 'react-leaflet';
+import L from 'leaflet';
+import 'leaflet/dist/leaflet.css';
+import { Truck, RotateCcw, Gauge, Clock, Home, CheckCircle2, AlertTriangle, MapPin, ArrowRight, Timer, Construction, Route as RouteIcon, X, ShieldCheck, Zap, Target, RefreshCw } from 'lucide-react';
 
 interface DriverPortalProps {
   driverId?: string;
@@ -21,101 +24,192 @@ const OBSTACLE_TYPES: Array<{ value: string; label: string }> = [
 
 const OBSTACLE_RADII_KM = [0.5, 1, 2, 3, 5];
 
-interface PathPreviewProps {
-  /** Naive straight-line path (before the blockage). */
-  straight?: Array<[number, number]>;
-  /** Obstacle-aware path (after re-optimization) — may contain detour via-points. */
-  detour?: Array<[number, number]>;
-  /** Active blockage circles to draw as no-go zones. */
-  obstacles?: RouteObstacle[];
+interface DriverTravelMapProps {
+  originLat: number;
+  originLng: number;
+  originName: string;
+  stops: DriverRouteStop[];
+  /** Obstacle-aware route geometry (depot + detour via-points + stops). */
+  geometry?: Array<[number, number]>;
+  /** Naive straight-line geometry (baseline). */
+  straightGeometry?: Array<[number, number]>;
+  obstacles: RouteObstacle[];
+  currentLat?: number;
+  currentLng?: number;
+  currentStopIndex: number;
 }
 
-/** Small SVG preview showing the straight path vs the obstacle-aware detour. */
-const PathPreview: React.FC<PathPreviewProps> = ({ straight, detour, obstacles }) => {
-  const W = 320;
-  const H = 180;
-  const PAD = 24;
+/** Pulsing green truck marker for current driver position. */
+const truckIcon = new L.DivIcon({
+  className: 'logimind-truck-marker',
+  html: `<div style="position:relative;width:30px;height:30px;filter:drop-shadow(0 4px 10px rgba(0,0,0,0.6))"><svg viewBox="0 0 24 24" width="30" height="30"><path d="M5 18v-2c0-1.1 0.9-2 2-2h14c1.1 0 2 0.9 2 2v2H5zm16-4V8l-3-3H6l-3 3v2c0 1.1 0.9 2 2 2h12c1.1 0 2-0.9 2-2v-2zM7 15c-1.7 0-3-1.3-3-3s1.3-3 3-3 3 1.3 3 3-1.3 3-3 3zm12 0c-1.7 0-3-1.3-3-3s1.3-3 3-3 3 1.3 3 3-1.3 3-3 3z" fill="#10b981"/></svg><div style="position:absolute;top:-4px;left:50%;transform:translateX(-50%);width:12px;height:12px;background:#10b981;border-radius:50%;border:2px solid #10b981;box-shadow:0 0 8px #10b981;animation:logimindPulse 2s ease-in-out infinite;"></div></div>`,
+  iconSize: [30, 30],
+  iconAnchor: [15, 30],
+});
+const depotIcon = new L.Icon({ iconUrl: `data:image/svg+xml,${encodeURIComponent(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7z" fill="#10b981" stroke="#ffffff" stroke-width="2"/><circle cx="12" cy="9" r="3" fill="#ffffff"/></svg>`)}`, iconSize: [25, 41], iconAnchor: [12, 41], popupAnchor: [0, -36] });
+const stopPendingIcon = new L.Icon({ iconUrl: `data:image/svg+xml,${encodeURIComponent(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7z" fill="#3b82f6" stroke="#ffffff" stroke-width="2"/><circle cx="12" cy="9" r="3" fill="#ffffff"/></svg>`)}`, iconSize: [25, 41], iconAnchor: [12, 41], popupAnchor: [0, -36] });
+const stopCompletedIcon = new L.Icon({ iconUrl: `data:image/svg+xml,${encodeURIComponent(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7z" fill="#10b981" stroke="#ffffff" stroke-width="2"/><circle cx="12" cy="9" r="3" fill="#ffffff"/></svg>`)}`, iconSize: [25, 41], iconAnchor: [12, 41], popupAnchor: [0, -36] });
 
-  // The span is set by the path only — the obstacle list is fleet-wide, so a
-  // distant blockage must not squash the preview (or shift the projection).
-  const pathPts = [...(straight || []), ...(detour || [])];
-  if (pathPts.length < 2) return null;
+/** Interactive Leaflet travel map for the driver's active route. */
+const DriverTravelMap: React.FC<DriverTravelMapProps> = ({
+  originLat,
+  originLng,
+  originName,
+  stops,
+  geometry,
+  straightGeometry,
+  obstacles,
+  currentLat,
+  currentLng,
+  currentStopIndex,
+}) => {
+  const mapRef = useRef<L.Map | null>(null);
+  const allPoints = React.useMemo(() => {
+    const pts: [number, number][] = [[originLat, originLng]];
+    if (geometry) geometry.forEach((p) => pts.push(p));
+    stops.forEach((s) => pts.push([s.dest_lat, s.dest_lng]));
+    if (currentLat !== undefined && currentLng !== undefined) pts.push([currentLat, currentLng]);
+    return pts;
+  }, [geometry, stops, currentLat, currentLng, originLat, originLng]);
 
-  const lats = pathPts.map(p => p[0]);
-  const lngs = pathPts.map(p => p[1]);
-  const minLat = Math.min(...lats);
-  const maxLat = Math.max(...lats);
-  const minLng = Math.min(...lngs);
-  const maxLng = Math.max(...lngs);
-  // Guard against a degenerate (single-point) span.
-  const spanLat = maxLat - minLat || 0.001;
-  const spanLng = maxLng - minLng || 0.001;
+  useEffect(() => {
+    if (!mapRef.current) return;
+    const stop = stops[currentStopIndex];
+    if (stop) {
+      mapRef.current.flyTo([stop.dest_lat, stop.dest_lng], 14);
+    } else if (currentLat !== undefined && currentLng !== undefined) {
+      mapRef.current.flyTo([currentLat, currentLng], 14);
+    }
+  }, [currentStopIndex, stops, currentLat, currentLng]);
 
-  // Only draw blockages near this route. Malformed records (null entry,
-  // missing/out-of-range coordinates) are dropped so the projection below
-  // can never dereference a null obstacle.
-  const marginLat = spanLat * 0.5 + 0.05;
-  const marginLng = spanLng * 0.5 + 0.05;
-  const nearObstacles = (obstacles || []).filter((o): o is RouteObstacle => {
-    if (!o || typeof o !== 'object') return false;
-    const lat = Number(o.latitude);
-    const lng = Number(o.longitude);
-    if (!Number.isFinite(lat) || !Number.isFinite(lng)) return false;
-    return (
-      lat >= minLat - marginLat && lat <= maxLat + marginLat &&
-      lng >= minLng - marginLng && lng <= maxLng + marginLng
-    );
-  });
-
-  // Equirectangular-ish projection: lng → x, lat → y (inverted).
-  const project = ([lat, lng]: [number, number]): [number, number] => [
-    PAD + ((lng - minLng) / spanLng) * (W - PAD * 2),
-    H - PAD - ((lat - minLat) / spanLat) * (H - PAD * 2),
-  ];
-
-  const toPath = (pts?: Array<[number, number]>): string =>
-    (pts || []).map(project).map((p, i) => `${i === 0 ? 'M' : 'L'} ${p[0].toFixed(1)} ${p[1].toFixed(1)}`).join(' ');
-
-  // Radius in px, derived from the km → degree scale of the view.
-  const kmPerDegLat = 110.574;
-  const pxPerDegLat = (H - PAD * 2) / spanLat;
-  const pxPerKm = pxPerDegLat / kmPerDegLat;
+  useEffect(() => {
+    if (!mapRef.current || allPoints.length === 0) return;
+    mapRef.current.fitBounds(L.latLngBounds(allPoints).pad(0.15));
+  }, []);
 
   return (
-    <div className="bg-gray-950/70 border border-gray-800 rounded-xl p-2">
-      <svg viewBox={`0 0 ${W} ${H}`} className="w-full h-auto">
-        {/* Straight (before) path */}
-        {straight && straight.length >= 2 && (
-          <path d={toPath(straight)} fill="none" stroke="#6b7280" strokeWidth="1.5" strokeDasharray="4,3" />
+    <div className="bg-gray-950/70 border border-gray-800 rounded-xl p-2 h-[420px] flex flex-col">
+      <div className="flex items-center justify-between mb-2">
+        <h3 className="text-xs font-bold text-white flex items-center gap-2">
+          <Target className="w-3 h-3 text-sky-400 shrink-0" /> Driver Travel Map
+        </h3>
+        <button
+          onClick={() => {
+            if (!mapRef.current) return;
+            const stop = stops[currentStopIndex];
+            const target = stop
+              ? [stop.dest_lat, stop.dest_lng]
+              : [currentLat ?? originLat, currentLng ?? originLng];
+            mapRef.current.flyTo(target as [number, number], 15);
+          }}
+          className="px-2 py-1 rounded bg-gray-800 hover:bg-gray-700 text-xs text-gray-300 border border-gray-700 transition-all"
+          title="Focus on Current Stop"
+        >
+          <RefreshCw className="w-3 h-3 mr-1" /> Focus Current Stop
+        </button>
+      </div>
+      <MapContainer
+        center={[originLat, originLng]}
+        zoom={12}
+        ref={mapRef}
+        className="flex-1 w-full h-full logimind-map"
+        style={{ height: '100%' }}
+      >
+        <TileLayer
+          url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+          attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+        />
+        {straightGeometry && straightGeometry.length >= 2 && (
+          <Polyline
+            positions={straightGeometry}
+            pathOptions={{
+              color: '#6b7280',
+              weight: 2,
+              opacity: 0.5,
+              dashArray: '6, 6',
+              lineJoin: 'round',
+              lineCap: 'round',
+            }}
+          />
         )}
-        {/* Obstacle-aware (after) path */}
-        {detour && detour.length >= 2 && (
-          <path d={toPath(detour)} fill="none" stroke="#34d399" strokeWidth="2.5" strokeLinecap="round" />
+        {geometry && geometry.length >= 2 && (
+          <Polyline
+            positions={geometry}
+            pathOptions={{
+              color: '#10b981',
+              weight: 4,
+              opacity: 0.9,
+              lineJoin: 'round',
+              lineCap: 'round',
+            }}
+          />
         )}
-        {/* No-go zones */}
-        {nearObstacles.map(o => {
-          const [cx, cy] = project([o.latitude, o.longitude]);
-          const r = Math.max(4, o.radius_km * pxPerKm);
+        {obstacles.map((o) => (
+          <Circle
+            key={o.obstacle_id}
+            center={[o.latitude, o.longitude]}
+            radius={(o.radius_km || 2) * 1000}
+            pathOptions={{
+              color: '#ef4444',
+              weight: 2,
+              fillColor: '#ef4444',
+              fillOpacity: 0.15,
+              dashArray: '6, 6',
+              interactive: false,
+            }}
+          />
+        ))}
+        <Marker position={[originLat, originLng]} icon={depotIcon}>
+          <Popup>
+            <div className="p-1">
+              <p className="text-xs font-bold text-green-400">{originName}</p>
+              <p className="text-[10px] text-gray-400">Depot / Origin</p>
+            </div>
+          </Popup>
+        </Marker>
+        {currentLat !== undefined && currentLng !== undefined && (
+          <Marker position={[currentLat, currentLng]} icon={truckIcon} zIndexOffset={1000}>
+            <Popup>
+              <div className="p-1">
+                <p className="text-xs font-bold text-white">Current Position</p>
+                <p className="text-[10px] text-gray-400">
+                  {currentLat.toFixed(4)}, {currentLng.toFixed(4)}
+                </p>
+              </div>
+            </Popup>
+          </Marker>
+        )}
+        {stops.map((stop) => {
+          const isCompleted = stop.status === 'DELIVERED';
+          const isCurrent = stop.status === 'IN_TRANSIT';
           return (
-            <circle key={o.obstacle_id} cx={cx} cy={cy} r={r}
-              fill="#fb7185" fillOpacity="0.18" stroke="#fb7185" strokeWidth="1.5" strokeDasharray="4,3" />
+            <Marker
+              key={stop.order_id}
+              position={[stop.dest_lat, stop.dest_lng]}
+              icon={isCompleted ? stopCompletedIcon : stopPendingIcon}
+              zIndexOffset={isCurrent ? 500 : 0}
+            >
+              <Popup>
+                <div className="p-1">
+                  <p className="text-xs font-bold text-white">{stop.customer_name}</p>
+                  <p className="text-[10px] text-gray-400">Stop #{stop.sequence}</p>
+                  <p className="text-[10px]">
+                    <span className={`font-bold ${isCompleted ? 'text-green-400' : isCurrent ? 'text-sky-400' : 'text-blue-400'}`}>
+                      {isCompleted ? 'Delivered' : isCurrent ? 'Current Stop' : 'Pending'}
+                    </span>
+                  </p>
+                </div>
+              </Popup>
+            </Marker>
           );
         })}
-        {/* Stop markers on the detour path */}
-        {(detour || []).map((p, i) => {
-          const [cx, cy] = project(p);
-          return <circle key={`d${i}`} cx={cx} cy={cy} r="3.5" fill="#34d399" stroke="#0b0f17" strokeWidth="1.5" />;
-        })}
-        {/* Origin marker */}
-        {(detour || straight || []).length > 0 && (() => {
-          const [cx, cy] = project((detour || straight)![0]);
-          return <circle cx={cx} cy={cy} r="4.5" fill="#22d3ee" stroke="#0b0f17" strokeWidth="1.5" />;
-        })()}
-      </svg>
-      <div className="flex items-center gap-3 mt-1.5 px-1 text-[9px] text-gray-500">
-        <span className="flex items-center gap-1"><span className="w-3.5 border-t-2 border-dashed border-gray-500" /> Direct path</span>
-        <span className="flex items-center gap-1"><span className="w-3.5 border-t-2 border-emerald-400" /> Re-optimized</span>
-        <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-full bg-rose-400/40 border border-rose-400" /> Blockage</span>
+      </MapContainer>
+      <div className="mt-2 flex flex-wrap items-center gap-2 text-[9px] text-gray-500">
+        <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-full bg-green-500" /> Truck</span>
+        <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-full bg-green-500" /> Depot</span>
+        <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-full bg-blue-500" /> Pending Stop</span>
+        <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-full bg-green-600" /> Completed Stop</span>
+        <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-full border border-rose-500" /> Hazard Zone</span>
       </div>
     </div>
   );
@@ -411,11 +505,18 @@ export const DriverPortal: React.FC<DriverPortalProps> = ({
               </div>
             )}
 
-            {/* Visual before/after: straight path vs the new detour around the blockage. */}
-            <PathPreview
-              straight={activeRoute.assigned_route?.straight_geometry}
-              detour={activeRoute.assigned_route?.geometry}
+            {/* Interactive Leaflet travel map with live truck position, stops, detours, and hazard zones. */}
+            <DriverTravelMap
+              originLat={19.0760}
+              originLng={72.8777}
+              originName={activeRoute.assigned_route?.origin_name ?? 'Assigned Depot'}
+              stops={activeRoute.assigned_route?.stops || []}
+              geometry={activeRoute.assigned_route?.geometry}
+              straightGeometry={activeRoute.assigned_route?.straight_geometry}
               obstacles={obstacles}
+              currentLat={19.0760}
+              currentLng={72.8777}
+              currentStopIndex={currentStopIndex}
             />
           </section>
         )}

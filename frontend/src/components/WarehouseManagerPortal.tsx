@@ -1,7 +1,9 @@
-﻿import React, { useEffect, useMemo, useState } from 'react';
-import type { WarehouseItem, InventoryItem, SkuAvailability } from '../types';
-import { fetchInventory, fetchSkuAvailability, addInventoryItem, updateInventoryItem, removeInventoryItem, shiftInventory, addWarehouse, removeWarehouse } from '../services/api';
-import { Boxes, Plus, Trash2, ArrowRightLeft, AlertTriangle, PackageCheck, Warehouse, PackagePlus, Search, Pencil, ChevronDown, ChevronLeft, ChevronRight } from 'lucide-react';
+import React, { useEffect, useMemo, useState } from 'react';
+import type { WarehouseItem, InventoryItem, SkuAvailability, DemandForecastResult } from '../types';
+import { fetchInventory, fetchSkuAvailability, addInventoryItem, updateInventoryItem, removeInventoryItem, shiftInventory, addWarehouse, removeWarehouse, fetchDemandForecast } from '../services/api';
+import { Boxes, Plus, Trash2, ArrowRightLeft, AlertTriangle, PackageCheck, Warehouse, PackagePlus, Search, Pencil, ChevronDown, ChevronLeft, ChevronRight, TrendingUp, BarChart2, Calendar, X, AlertCircle, CheckCircle } from 'lucide-react';
+import { ResponsiveContainer, AreaChart, Area, XAxis, YAxis, Tooltip, CartesianGrid } from 'recharts';
+
 
 interface WarehouseManagerPortalProps {
   warehouses: WarehouseItem[];
@@ -47,6 +49,43 @@ export const WarehouseManagerPortal: React.FC<WarehouseManagerPortalProps> = ({ 
   const [editing, setEditing] = useState<string | null>(null);
   const [editQty, setEditQty] = useState('');
   const [editThreshold, setEditThreshold] = useState('');
+
+  const [selectedForecastItem, setSelectedForecastItem] = useState<InventoryItem | null>(null);
+  const [forecastHorizon, setForecastHorizon] = useState<number>(7);
+  const [forecastData, setForecastData] = useState<DemandForecastResult | null>(null);
+  const [forecastLoading, setForecastLoading] = useState<boolean>(false);
+  const [forecastError, setForecastError] = useState<string | null>(null);
+
+  const handleOpenForecast = async (item: InventoryItem, horizon: number = 7) => {
+    setSelectedForecastItem(item);
+    setForecastHorizon(horizon);
+    setForecastLoading(true);
+    setForecastError(null);
+    try {
+      const data = await fetchDemandForecast(item.warehouse_id, item.sku, horizon);
+      setForecastData(data);
+    } catch (e: any) {
+      setForecastError(e.message || 'Failed to fetch demand forecast');
+    } finally {
+      setForecastLoading(false);
+    }
+  };
+
+  const handleHorizonChange = async (horizon: number) => {
+    if (!selectedForecastItem) return;
+    setForecastHorizon(horizon);
+    setForecastLoading(true);
+    setForecastError(null);
+    try {
+      const data = await fetchDemandForecast(selectedForecastItem.warehouse_id, selectedForecastItem.sku, horizon);
+      setForecastData(data);
+    } catch (e: any) {
+      setForecastError(e.message || 'Failed to fetch demand forecast');
+    } finally {
+      setForecastLoading(false);
+    }
+  };
+
 
   useEffect(() => { loadInventory(); }, []);
   useEffect(() => { // re-sync warehouse dropdown defaults when hubs change (#19)
@@ -452,9 +491,19 @@ export const WarehouseManagerPortal: React.FC<WarehouseManagerPortalProps> = ({ 
                               <button onClick={() => setEditing(null)} className="px-2 py-1 rounded-lg bg-gray-800 text-gray-300 text-[10px] font-bold border border-gray-700">Cancel</button>
                             </>
                           ) : (
-                            <button onClick={() => startEdit(item)} className="p-1.5 rounded-lg hover:bg-sky-500/20 text-gray-400 hover:text-sky-300" title={`Edit ${item.sku}`}><Pencil className="w-3.5 h-3.5" /></button>
+                            <>
+                              <button
+                                onClick={() => handleOpenForecast(item, 7)}
+                                className="p-1.5 rounded-lg hover:bg-amber-500/20 text-gray-400 hover:text-amber-400 transition-colors"
+                                title={`Forecast demand for ${item.sku}`}
+                              >
+                                <TrendingUp className="w-3.5 h-3.5" />
+                              </button>
+                              <button onClick={() => startEdit(item)} className="p-1.5 rounded-lg hover:bg-sky-500/20 text-gray-400 hover:text-sky-300" title={`Edit ${item.sku}`}><Pencil className="w-3.5 h-3.5" /></button>
+                            </>
                           )}
                           <button onClick={() => handleRemoveItem(item)} className="p-1.5 rounded-lg hover:bg-red-500/20 text-gray-400 hover:text-red-400" title={`Remove ${item.sku}`}><Trash2 className="w-3.5 h-3.5" /></button>
+
                         </div>
                       </td>
                     </tr>
@@ -465,16 +514,152 @@ export const WarehouseManagerPortal: React.FC<WarehouseManagerPortalProps> = ({ 
           </div>
         )}
       </section>
-      <section className="flex items-center justify-between">
-        <p className="text-[10px] text-gray-500">Page {safePage + 1} of {pageCount} - {filteredSorted.length} rows</p>
-        <div className="flex items-center gap-1">
-          <button onClick={() => setPage(p => Math.max(0, p - 1))} disabled={safePage === 0} className="p-1.5 rounded-lg bg-gray-900 text-gray-300 border border-gray-700 disabled:opacity-40" title="Previous page"><ChevronLeft className="w-3.5 h-3.5" /></button>
-          <button onClick={() => setPage(p => Math.min(pageCount - 1, p + 1))} disabled={safePage >= pageCount - 1} className="p-1.5 rounded-lg bg-gray-900 text-gray-300 border border-gray-700 disabled:opacity-40" title="Next page"><ChevronRight className="w-3.5 h-3.5" /></button>
+      {/* AI Stock Demand Forecast Modal */}
+      {selectedForecastItem && (
+        <div className="fixed inset-0 z-[2000] bg-black/75 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-gray-900 border border-amber-500/30 rounded-2xl max-w-2xl w-full p-6 space-y-4 shadow-2xl relative">
+            <button
+              onClick={() => setSelectedForecastItem(null)}
+              className="absolute top-4 right-4 text-gray-400 hover:text-white"
+            >
+              <X className="w-5 h-5" />
+            </button>
+
+            <div className="flex items-center gap-3">
+              <div className="p-2.5 rounded-xl bg-amber-500/20 text-amber-400">
+                <BarChart2 className="w-5 h-5" />
+              </div>
+              <div>
+                <div className="flex items-center gap-2">
+                  <h3 className="text-base font-bold text-white">Stock Demand Forecast</h3>
+                  <span className="px-2 py-0.5 rounded bg-sky-500/20 border border-sky-500/30 text-sky-300 font-mono text-[10px] font-bold">
+                    {selectedForecastItem.sku}
+                  </span>
+                </div>
+                <p className="text-xs text-gray-400">
+                  {selectedForecastItem.item_name} · {whName(selectedForecastItem.warehouse_id)}
+                </p>
+              </div>
+            </div>
+
+            {/* Horizon Selector */}
+            <div className="flex items-center justify-between border-b border-gray-800 pb-3">
+              <span className="text-xs text-gray-400 font-medium">Forecast Horizon:</span>
+              <div className="flex items-center gap-1.5">
+                {[7, 14, 30].map(h => (
+                  <button
+                    key={h}
+                    onClick={() => handleHorizonChange(h)}
+                    className={`px-3 py-1 rounded-lg text-xs font-bold transition-all ${
+                      forecastHorizon === h
+                        ? 'bg-amber-500 text-white shadow-lg shadow-amber-500/20'
+                        : 'bg-gray-800 text-gray-400 hover:text-white'
+                    }`}
+                  >
+                    {h} Days
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {forecastLoading ? (
+              <div className="py-16 text-center text-xs text-amber-400 flex flex-col items-center gap-2">
+                <div className="w-6 h-6 border-2 border-amber-400 border-t-transparent rounded-full animate-spin" />
+                <span>Generating Prophet + LightGBM demand projection...</span>
+              </div>
+            ) : forecastError ? (
+              <div className="p-4 rounded-xl bg-red-500/10 border border-red-500/30 text-xs text-red-300">
+                {forecastError}
+              </div>
+            ) : forecastData ? (
+              <div className="space-y-4">
+                {/* Metric Summary Cards */}
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
+                  <div className="p-3 rounded-xl bg-gray-950/60 border border-gray-800">
+                    <span className="text-[10px] text-gray-400 font-semibold block">On-Hand Stock</span>
+                    <span className="text-base font-extrabold text-white mt-0.5 block">
+                      {selectedForecastItem.quantity} <span className="text-xs font-normal text-gray-400">{selectedForecastItem.unit}</span>
+                    </span>
+                  </div>
+                  <div className="p-3 rounded-xl bg-gray-950/60 border border-gray-800">
+                    <span className="text-[10px] text-gray-400 font-semibold block">Projected Volume</span>
+                    <span className="text-base font-extrabold text-amber-400 mt-0.5 block">
+                      {forecastData.total_predicted_volume} <span className="text-xs font-normal text-gray-400">units</span>
+                    </span>
+                  </div>
+                  <div className="p-3 rounded-xl bg-gray-950/60 border border-gray-800">
+                    <span className="text-[10px] text-gray-400 font-semibold block">Daily Burn Rate</span>
+                    <span className="text-base font-extrabold text-sky-400 mt-0.5 block">
+                      ~{forecastData.average_daily_volume} <span className="text-xs font-normal text-gray-400">/day</span>
+                    </span>
+                  </div>
+                  <div className="p-3 rounded-xl bg-gray-950/60 border border-gray-800">
+                    <span className="text-[10px] text-gray-400 font-semibold block">Buffer Safety Stock</span>
+                    <span className="text-base font-extrabold text-purple-400 mt-0.5 block">
+                      {forecastData.recommended_safety_stock} <span className="text-xs font-normal text-gray-400">units</span>
+                    </span>
+                  </div>
+                </div>
+
+                {/* Stockout Risk Bar */}
+                <div className="p-3 rounded-xl bg-gray-950/60 border border-gray-800 flex items-center justify-between text-xs">
+                  <div className="flex items-center gap-2">
+                    {selectedForecastItem.quantity < forecastData.total_predicted_volume ? (
+                      <AlertCircle className="w-4 h-4 text-rose-400 shrink-0" />
+                    ) : (
+                      <CheckCircle className="w-4 h-4 text-emerald-400 shrink-0" />
+                    )}
+                    <span className="text-gray-300">
+                      Estimated runway: <b className="text-white">
+                        {(selectedForecastItem.quantity / Math.max(1, forecastData.average_daily_volume)).toFixed(1)} days
+                      </b> before depletion.
+                    </span>
+                  </div>
+                  <span className={`px-2 py-0.5 rounded text-[10px] font-bold border ${
+                    selectedForecastItem.quantity < forecastData.total_predicted_volume
+                      ? 'bg-rose-500/10 text-rose-400 border-rose-500/30'
+                      : 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30'
+                  }`}>
+                    {selectedForecastItem.quantity < forecastData.total_predicted_volume ? 'REORDER URGENT' : 'STOCK HEALTHY'}
+                  </span>
+                </div>
+
+                {/* Recharts Area Chart */}
+                <div className="h-56 w-full pt-2">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <AreaChart data={forecastData.daily_forecast} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
+                      <defs>
+                        <linearGradient id="predGrad" x1="0" y1="0" x2="0" y2="1">
+                          <stop offset="5%" stopColor="#f59e0b" stopOpacity={0.4} />
+                          <stop offset="95%" stopColor="#f59e0b" stopOpacity={0.0} />
+                        </linearGradient>
+                      </defs>
+                      <CartesianGrid strokeDasharray="3 3" stroke="#1f2937" vertical={false} />
+                      <XAxis dataKey="day" stroke="#6b7280" tick={{ fontSize: 10 }} />
+                      <YAxis stroke="#6b7280" tick={{ fontSize: 10 }} />
+                      <Tooltip
+                        contentStyle={{ backgroundColor: '#111827', borderColor: '#374151', borderRadius: '0.75rem', fontSize: '11px' }}
+                        labelStyle={{ color: '#f3f4f6', fontWeight: 'bold' }}
+                      />
+                      <Area type="monotone" dataKey="upper_bound" stroke="#d97706" strokeDasharray="4 4" fill="none" name="95% Upper Bound" />
+                      <Area type="monotone" dataKey="predicted_demand" stroke="#f59e0b" strokeWidth={2.5} fillOpacity={1} fill="url(#predGrad)" name="Predicted Daily Demand" />
+                    </AreaChart>
+                  </ResponsiveContainer>
+                </div>
+
+                <p className="text-[11px] text-gray-400 italic bg-gray-950/40 p-2.5 rounded-xl border border-gray-800">
+                  {forecastData.summary_text}
+                </p>
+              </div>
+            ) : null}
+          </div>
         </div>
-      </section>
+      )}
+
       <footer className="text-center text-[10px] text-gray-500 uppercase tracking-widest pt-2">
         LogiMind AI - Warehouse Manager Portal
       </footer>
     </div>
   );
 };
+

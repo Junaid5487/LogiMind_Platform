@@ -91,9 +91,17 @@ def startup_event():
     # before serving traffic, so a partial/stale database file can never 500
     # endpoints with "no such table" — locally or in the Render container.
     try:
-        from app.db.session import engine, Base
+        from app.db.session import engine, Base, SessionLocal
+        from app.db.seed_data import seed_database_if_empty
         Base.metadata.create_all(bind=engine)
         logger.info("Database schema verified/created successfully.")
+        db = SessionLocal()
+        try:
+            seed_database_if_empty(db)
+            logger.info("Database seed entities verified/loaded successfully.")
+        finally:
+            db.close()
     except Exception as exc:
         logger.error(f"Database schema check failed: {exc}", exc_info=True)
     logger.info(f"=== {settings.PROJECT_NAME} Initialized Successfully ===")
+

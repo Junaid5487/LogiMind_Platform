@@ -1,8 +1,16 @@
-import type { DashboardKPIs, WarehouseItem, VehicleItem, RouteItem, CopilotResponse, SimulationResult, DriverListItem, InventoryItem, ShiftInventoryPayload, ShiftInventoryResult, ScenarioOrder, DefaultRoutesResult, SkuAvailability, RebalanceResult, RouteObstacle, ObstacleReportResult, OptimizeResult, DispatchResult, RouteLedgerResult, CopilotAuditEntry } from '../types';
+import type {
+  DashboardKPIs, WarehouseItem, VehicleItem, RouteItem, CopilotResponse,
+  SimulationResult, DriverListItem, InventoryItem, ShiftInventoryPayload,
+  ShiftInventoryResult, ScenarioOrder, DefaultRoutesResult, SkuAvailability,
+  RebalanceResult, RouteObstacle, ObstacleReportResult, OptimizeResult,
+  DispatchResult, RouteLedgerResult, CopilotAuditEntry,
+  VehicleConditionPayload, VehicleConditionResult, InspectionLogItem, DemandForecastResult
+} from '../types';
 
 const API_BASE_URL = typeof window !== 'undefined' && window.location.origin.includes('5173')
   ? 'http://localhost:8000/api/v1'
   : `${window.location.origin}/api/v1`;
+
 
 function getHeaders(customHeaders: Record<string, string> = {}): Record<string, string> {
   const token = localStorage.getItem('logimind_token');
@@ -28,7 +36,7 @@ export async function fetchDashboardKPIs(): Promise<DashboardKPIs> {
       on_time_trend: "+1.2% SLA compliance",
       warehouse_capacity_pct: 82.6,
       warehouse_capacity_trend: "Optimal fill rate",
-      co2_savings_tons: 24.8,
+      dollar_savings: 19.90,
       co2_trend: "-14.2% carbon reduction"
     };
   }
@@ -612,4 +620,40 @@ export async function removeWarehouse(warehouseId: string): Promise<void> {
   });
   if (!res.ok) await parseApiError(res, 'Failed to remove warehouse');
 }
+
+export async function updateVehicleCondition(
+  vehicleId: string,
+  payload: VehicleConditionPayload
+): Promise<VehicleConditionResult> {
+  const res = await fetch(`${API_BASE_URL}/vehicles/${vehicleId}/condition`, {
+    method: 'POST',
+    headers: getHeaders({ 'Content-Type': 'application/json' }),
+    body: JSON.stringify(payload),
+  });
+  if (!res.ok) await parseApiError(res, 'Failed to update vehicle condition');
+  return await res.json();
+}
+
+export async function fetchVehicleInspections(vehicleId: string): Promise<InspectionLogItem[]> {
+  const res = await fetch(`${API_BASE_URL}/vehicles/${vehicleId}/inspections`, {
+    headers: getHeaders(),
+  });
+  if (!res.ok) await parseApiError(res, 'Failed to fetch inspection history');
+  return await res.json();
+}
+
+export async function fetchDemandForecast(
+  warehouseId: string,
+  sku: string,
+  horizonDays: number = 7
+): Promise<DemandForecastResult> {
+  const res = await fetch(`${API_BASE_URL}/forecast/demand`, {
+    method: 'POST',
+    headers: getHeaders({ 'Content-Type': 'application/json' }),
+    body: JSON.stringify({ warehouse_id: warehouseId, sku, horizon_days: horizonDays }),
+  });
+  if (!res.ok) await parseApiError(res, 'Failed to generate demand forecast');
+  return await res.json();
+}
+
 

@@ -113,7 +113,7 @@ export interface DashboardKPIs {
   on_time_trend: string;
   warehouse_capacity_pct: number;
   warehouse_capacity_trend: string;
-  co2_savings_tons: number;
+  dollar_savings: number;
   co2_trend: string;
 }
 
@@ -431,4 +431,75 @@ export interface DefaultRoutesResult {
   solver_engine: string;
   message?: string;
 }
+
+export interface VehicleConditionPayload {
+  mileage_km?: number;
+  engine_temp_c?: number;
+  coolant_pressure_bar?: number;
+  tire_wear_pct?: number;
+  fuel_level_pct?: number;
+  service_status?: string;
+  inspection_notes?: string;
+}
+
+export interface ShapFeature {
+  feature: string;
+  value: string;
+  impact: string;
+}
+
+export interface VehicleConditionResult {
+  status: string;
+  vehicle_id: string;
+  vehicle_status: string;
+  odometer_km: number;
+  telemetry: any;
+  risk_analysis: {
+    vehicle_id: string;
+    vehicle_name: string;
+    status: string;
+    overall_failure_risk: number;
+    component_risks: {
+      engine_cooling: number;
+      tires_suspension: number;
+      brakes: number;
+      battery_electrical: number;
+    };
+    recommendation: string;
+    shap_top_features: ShapFeature[];
+  };
+}
+
+export interface InspectionLogItem {
+  maintenance_log_id: string;
+  service_type: string;
+  component_serviced: string;
+  service_date?: string;
+  cost: number;
+  status: string;
+  failure_risk_score: number;
+  description?: string;
+}
+
+export interface DailyDemandPrediction {
+  day: string;
+  day_number: number;
+  predicted_demand: number;
+  upper_bound: number;
+  lower_bound: number;
+}
+
+export interface DemandForecastResult {
+  warehouse_id: string;
+  sku: string;
+  horizon_days: number;
+  total_predicted_volume: number;
+  average_daily_volume: number;
+  recommended_safety_stock: number;
+  reorder_urgency: 'NORMAL' | 'WARNING' | 'CRITICAL';
+  daily_forecast: DailyDemandPrediction[];
+  model_version: string;
+  summary_text?: string;
+}
+
 
