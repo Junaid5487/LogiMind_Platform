@@ -59,7 +59,7 @@ export const Navbar: React.FC<NavbarProps> = ({ activeTab, setActiveTab, onOpenC
     };
     checkRole();
     const observer = new MutationObserver(checkRole);
-    observer.observe(document.body, { attributes: true, className: true });
+    observer.observe(document.body, { attributes: true, attributeFilter: ['class'] });
     return () => observer.disconnect();
   }, []);
 
@@ -67,14 +67,10 @@ export const Navbar: React.FC<NavbarProps> = ({ activeTab, setActiveTab, onOpenC
 
   useEffect(() => {
     // Sync role selection with body classes
-    const removeClasses = ['admin', 'fleet_manager', 'warehouse_manager', 'driver'].map(c => 
-      
-ole-
-    );
+    const removeClasses = ['admin', 'fleet_manager', 'warehouse_manager', 'driver'];
     const body = document.body;
     removeClasses.forEach(cls => body.classList.remove(cls));
-    if (role) body.classList.add(
-ole-);
+    if (role) body.classList.add(role);
   }, [role]);
 
   const navItemButtons = navItems.map((item) => {
@@ -102,6 +98,10 @@ ole-);
           <h1 className='text-base font-bold text-white tracking-wide'>LogiMind AI</h1>
           <p className='text-[10px] text-sky-400 font-semibold uppercase tracking-wider'>Enterprise Fleet & Logistics OS</p>
         </div>
+      </div>
+
+      <div className='hidden md:flex items-center gap-1 flex-wrap'>
+        {navItemButtons}
       </div>
 
       <div className='flex items-center gap-2'>
