@@ -5,30 +5,18 @@ import { ExecutiveDashboard } from './components/ExecutiveDashboard';
 import { LiveRouteMap } from './components/LiveRouteMap';
 import { WarehouseHub } from './components/WarehouseHub';
 import { FleetHealthPanel } from './components/FleetHealthPanel';
-import { CopilotChatDrawer } from './components/CopilotChatDrawer';
 import { DigitalTwinConsole } from './components/DigitalTwinConsole';
+import { CopilotChatDrawer } from './components/CopilotChatDrawer';
 import { AuthModal } from './components/auth/AuthModal';
 import { DriverPortal } from './components/DriverPortal';
 import { FleetManagerPortal } from './components/FleetManagerPortal';
 import { WarehouseManagerPortal } from './components/WarehouseManagerPortal';
-
-import { fetchDashboardKPIs, fetchWarehouses, fetchVehicles, fetchScenarioOrders, fetchDefaultRoutes, optimizeRoutes, fetchObstacles } from './services/api';
+import { fetchDashboardKPIs, fetchWarehouses, fetchVehicles, fetchScenarioOrders, fetchDefaultRoutes, fetchObstacles, optimizeRoutes } from './services/api';
 import type { DashboardKPIs, WarehouseItem, VehicleItem, RouteItem, ScenarioOrder, UserRole, RouteObstacle, RouteComparison, ConstraintReport } from './types';
 import { ScenarioPlanner } from './components/ScenarioPlanner';
 
-const ROLE_DEFAULT_TAB: Record<UserRole, string> = {
-  admin: 'dashboard',
-  fleet_manager: 'fleetmgr',
-  warehouse_manager: 'whmgr',
-  driver: 'driver',
-};
-
 function MainApp() {
-  const [activeTab, setActiveTab] = useState<string>('dashboard');
-  const [role, setRole] = useState<UserRole>('admin');
-  const [isCopilotOpen, setIsCopilotOpen] = useState<boolean>(false);
-  const [isAuthOpen, setIsAuthOpen] = useState<boolean>(false);
-
+  const [activeTab, setActiveTab] = useState('dashboard');
   const [kpis, setKpis] = useState<DashboardKPIs | null>(null);
   const [warehouses, setWarehouses] = useState<WarehouseItem[]>([]);
   const [vehicles, setVehicles] = useState<VehicleItem[]>([]);
@@ -36,15 +24,14 @@ function MainApp() {
   const [defaultRoutes, setDefaultRoutes] = useState<RouteItem[]>([]);
   const [obstacles, setObstacles] = useState<RouteObstacle[]>([]);
   const [orders, setOrders] = useState<ScenarioOrder[]>([]);
-  const [loadingVrp, setLoadingVrp] = useState<boolean>(false);
-  const [optimizedOnce, setOptimizedOnce] = useState<boolean>(false);
-  const [selectedVehicleId, setSelectedVehicleId] = useState<string>('ALL');
-  const [vrpMeta, setVrpMeta] = useState<{ solverEngine?: string; totalDistanceKm?: number; defaultDistanceKm?: number; lastRunAt?: string; optimizedVehicleId?: string }>({});
-  // Naive-vs-optimized savings + constraint audit from the last optimize run.
+  const [loadingVrp, setLoadingVrp] = useState(false);
+  const [optimizedOnce, setOptimizedOnce] = useState(false);
+  const [selectedVehicleId, setSelectedVehicleId] = useState('ALL');
+  const [vrpMeta, setVrpMeta] = useState<{ solverEngine?: string; totalDistanceKm?: number; defaultDistanceKm?: number; lastRunAt?: string }>({});
   const [routeComparison, setRouteComparison] = useState<RouteComparison | null>(null);
   const [constraintReport, setConstraintReport] = useState<ConstraintReport | null>(null);
-
-  const [driverId, setDriverId] = useState<string>('DRV-01');
+  const [driverId, setDriverId] = useState('DRV-01');
+  const [isCopilotOpen, setIsCopilotOpen] = useState(false);
 
   const loadData = async () => {
     try {
@@ -52,9 +39,9 @@ function MainApp() {
         fetchDashboardKPIs(),
         fetchWarehouses(),
         fetchVehicles(),
-        fetchScenarioOrders().catch(() => [] as ScenarioOrder[]),
-        fetchDefaultRoutes().catch(() => ({ routes: [] as RouteItem[], total_distance_km: 0, status: 'ERROR', solver_engine: 'default' })),
-        fetchObstacles().catch(() => [] as RouteObstacle[]),
+        fetchScenarioOrders().catch(() => []),
+        fetchDefaultRoutes().catch(() => ({ routes: [], total_distance_km: 0, status: 'ERROR', solver_engine: 'default' })),
+        fetchObstacles().catch(() => []),
       ]);
 
       setKpis(kpiRes);
@@ -62,8 +49,6 @@ function MainApp() {
       setVehicles(vehRes);
       setOrders(orderRes);
       setObstacles(obsRes);
-      // Default-first UX: the map shows the naive baseline immediately;
-      // the optimized result appears only after the user presses "Optimize Route".
       setDefaultRoutes(defRes.routes || []);
       setRoutes([]);
       setOptimizedOnce(false);
@@ -74,25 +59,7 @@ function MainApp() {
         lastRunAt: new Date().toLocaleTimeString(),
       });
     } catch (e) {
-      console.error("Error loading LogiMind platform data:", e);
-    }
-  };
-
-  const reloadScenario = async () => {
-    try {
-      const [whRes, vehRes, orderRes, defRes] = await Promise.all([
-        fetchWarehouses(),
-        fetchVehicles(),
-        fetchScenarioOrders(),
-        fetchDefaultRoutes(),
-      ]);
-      setWarehouses(whRes);
-      setVehicles(vehRes);
-      setOrders(orderRes);
-      setDefaultRoutes(defRes.routes || []);
-      setVrpMeta((prev) => ({ ...prev, defaultDistanceKm: defRes.total_distance_km }));
-    } catch (e) {
-      console.error("Error reloading scenario:", e);
+      console.error('Error loading LogiMind platform data:', e);
     }
   };
 
@@ -100,108 +67,71 @@ function MainApp() {
     loadData();
   }, []);
 
-  // Obstacles can be reported/cleared from other portals — refresh them when
-  // the map opens so the drawn no-go zones are always current.
-  useEffect(() => {
-    if (activeTab === 'routemap') {
-      fetchObstacles().then(setObstacles).catch(() => {});
-    }
-  }, [activeTab]);
-
-  const handleRunVrpOptimization = async (vehicleId?: string) => {
+  const handleRunVrpOptimization = async () => {
     setLoadingVrp(true);
-    const startedAt = Date.now();
-    // Dashboard dropdown and map dropdown share one selection; explicit arg wins.
-    const targetVehicle = vehicleId ?? selectedVehicleId ?? 'ALL';
     try {
-      const vrpRes = await optimizeRoutes(targetVehicle);
-      setRoutes(vrpRes.routes || []);
-      setRouteComparison(vrpRes.comparison || null);
-      setConstraintReport(vrpRes.constraint_report || null);
-      setOptimizedOnce(true);
-      setVrpMeta((prev) => ({
-        ...prev,
-        solverEngine: vrpRes.solver_engine,
-        totalDistanceKm: vrpRes.total_distance_km,
+      const result = await optimizeRoutes();
+      setRoutes(result.routes || []);
+      setVrpMeta({
+        solverEngine: result.solver_engine,
+        totalDistanceKm: result.total_distance_km,
+        defaultDistanceKm: result.total_distance_km,
         lastRunAt: new Date().toLocaleTimeString(),
-        optimizedVehicleId: targetVehicle,
-      }));
-      // Jump context: optimizing one vehicle from the dashboard lands you on its map route.
-      if (targetVehicle && targetVehicle !== 'ALL') {
-        setSelectedVehicleId(targetVehicle);
-        setActiveTab('routemap');
+      });
+      setOptimizedOnce(true);
+      if (result.comparison) {
+        setRouteComparison({
+          baseline_strategy: result.comparison.baseline_strategy,
+          naive: result.comparison.naive,
+          optimized: result.comparison.optimized,
+          saved: result.comparison.saved,
+          saved_pct: result.comparison.saved_pct,
+        });
+      }
+      if (result.constraint_report) {
+        setConstraintReport({
+          capacity_kg: result.constraint_report.capacity_kg,
+          range: result.constraint_report.range,
+          risk: result.constraint_report.risk,
+          selection: result.constraint_report.selection,
+          excluded_vehicles: result.constraint_report.excluded_vehicles,
+          vehicles_evaluated: result.constraint_report.vehicles_evaluated,
+          vehicles_dispatched: result.constraint_report.vehicles_dispatched || 0,
+        });
       }
     } catch (e) {
-      console.error(e);
+      console.error('Optimization error:', e);
     } finally {
-      // Keep the spinner visible long enough for the re-run to be perceptible
-      const elapsed = Date.now() - startedAt;
-      window.setTimeout(() => setLoadingVrp(false), Math.max(0, 700 - elapsed));
+      setLoadingVrp(false);
     }
   };
 
-  const handleOptimizeFromDashboard = async (vehicleId: string) => {
-    setSelectedVehicleId(vehicleId || 'ALL');
-    await handleRunVrpOptimization(vehicleId || 'ALL');
-  };
-
-  const handleExecuteCopilotAction = (action: string) => {
-    // Every suggested action routes to the tab that can complete it.
-    if (action === 'RUN_VRP') {
-      setActiveTab('routemap');
-      setIsCopilotOpen(false);
-      handleRunVrpOptimization('ALL');
-    } else if (action === 'RUN_REBALANCE' || action === 'DISPATCH_TRANSFERS') {
-      setActiveTab('warehouse');
-      setIsCopilotOpen(false);
-    } else if (action === 'RUN_SIMULATION') {
-      setActiveTab('simulator');
-      setIsCopilotOpen(false);
-    } else if (action === 'SHOW_LEDGER') {
-      setActiveTab('fleetmgr');
-      setIsCopilotOpen(false);
-    } else if (action === 'MAINTENANCE_SCHEDULE') {
-      setActiveTab('fleet');
-      setIsCopilotOpen(false);
-    } else if (action === 'NAVIGATE_SIMULATOR') {
-      setActiveTab('simulator');
-      setIsCopilotOpen(false);
-    } else if (action === 'REBALANCE_LP') {
-      setActiveTab('warehouse');
-      setIsCopilotOpen(false);
-    }
-  };
-
-  const handleRoleChange = (newRole: UserRole) => {
-    setRole(newRole);
-    setActiveTab(ROLE_DEFAULT_TAB[newRole]);
+  const reloadScenario = async () => {
+    loadData();
   };
 
   return (
-    <div className="min-h-screen bg-[#0b0f17] text-gray-100 flex flex-col">
+    <div className='min-h-screen bg-[#0b0f17] text-gray-100 flex flex-col'>
       <Navbar
         activeTab={activeTab}
         setActiveTab={setActiveTab}
         onOpenCopilot={() => setIsCopilotOpen(true)}
-        onOpenAuth={() => setIsAuthOpen(true)}
-        role={role}
-        onRoleChange={handleRoleChange}
       />
 
-      <main className="flex-1 max-w-7xl w-full mx-auto">
-        {activeTab === 'dashboard' && role === 'admin' && (
+      <main className='flex-1 max-w-7xl w-full mx-auto'>
+        {activeTab === 'dashboard' && (
           <ExecutiveDashboard
             kpis={kpis}
             vehicles={vehicles}
             selectedVehicleId={selectedVehicleId}
             onSelectVehicle={setSelectedVehicleId}
-            onOptimizeVehicle={handleOptimizeFromDashboard}
+            onOptimizeVehicle={handleRunVrpOptimization}
             isOptimizing={loadingVrp}
             onNavigate={setActiveTab}
           />
         )}
 
-        {activeTab === 'routemap' && role === 'admin' && (
+        {activeTab === 'routemap' && (
           <LiveRouteMap
             warehouses={warehouses}
             vehicles={vehicles}
@@ -223,19 +153,19 @@ function MainApp() {
           />
         )}
 
-        {activeTab === 'warehouse' && role === 'admin' && (
+        {activeTab === 'warehouse' && (
           <WarehouseHub warehouses={warehouses} onChanged={reloadScenario} />
         )}
 
-        {activeTab === 'fleet' && role === 'admin' && (
+        {activeTab === 'fleet' && (
           <FleetHealthPanel vehicles={vehicles} />
         )}
 
-        {activeTab === 'simulator' && role === 'admin' && (
+        {activeTab === 'simulator' && (
           <DigitalTwinConsole />
         )}
 
-        {activeTab === 'fleetmgr' && role === 'fleet_manager' && (
+        {activeTab === 'fleetmgr' && (
           <FleetManagerPortal
             vehicles={vehicles}
             routes={routes}
@@ -246,11 +176,11 @@ function MainApp() {
           />
         )}
 
-        {activeTab === 'whmgr' && role === 'warehouse_manager' && (
+        {activeTab === 'whmgr' && (
           <WarehouseManagerPortal warehouses={warehouses} onReload={reloadScenario} />
         )}
 
-        {activeTab === 'driver' && role === 'driver' && (
+        {activeTab === 'driver' && (
           <DriverPortal
             driverId={driverId}
             onStopCompleted={() => {}}
@@ -261,12 +191,12 @@ function MainApp() {
       <CopilotChatDrawer
         isOpen={isCopilotOpen}
         onClose={() => setIsCopilotOpen(false)}
-        onExecuteAction={handleExecuteCopilotAction}
+        onExecuteAction={() => {}}
       />
 
       <AuthModal
-        isOpen={isAuthOpen}
-        onClose={() => setIsAuthOpen(false)}
+        isOpen={false}
+        onClose={() => {}}
       />
     </div>
   );
