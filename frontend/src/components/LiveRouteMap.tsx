@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import type { RouteItem, RouteLocation, WarehouseItem, VehicleItem, RouteObstacle, RouteComparison, ConstraintReport } from '../types';
-import { RefreshCw, Navigation, Zap, CheckCircle2, Route as RouteIcon, MapPin, Flag, CircleDot, Construction, ShieldCheck, Plus, X, AlertTriangle, AlertOctagon } from 'lucide-react';
+import { RefreshCw, Navigation, Zap, CheckCircle2, Route as RouteIcon, MapPin, Flag, CircleDot, Construction, ShieldCheck, Plus, X, AlertTriangle, AlertOctagon, ChevronDown, ChevronRight } from 'lucide-react';
 import { MapContainer, TileLayer, Marker, Popup, Polyline, Circle, useMap } from 'react-leaflet';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
@@ -313,22 +313,26 @@ export const LiveRouteMap: React.FC<LiveRouteMapProps> = ({ warehouses, vehicles
         </div>
 
         <div className="flex items-center gap-2 flex-wrap">
-          <select
-            value={activeVehicle}
-            onChange={(e) => onSelectVehicle?.(e.target.value)}
-            className="px-3 py-2.5 rounded-xl bg-gray-900/80 border border-gray-700 text-xs text-white font-semibold outline-none focus:border-sky-500/60 min-w-[200px]"
-            title="Choose which vehicle's optimized route to show"
-          >
-            <option value="ALL">All vehicles</option>
-            {vehicles.map((v) => {
-              const vid = v.id || (v as any).vehicle_id;
-              return (
-                <option key={vid} value={vid}>
-                  {vid} — {v.name}
-                </option>
-              );
-            })}
-          </select>
+          {/* Custom-styled vehicle dropdown with consistent arrow glyph */}
+          <div className="relative w-full sm:w-auto" data-dropdown="vehicle">
+            <select
+              value={activeVehicle}
+              onChange={(e) => onSelectVehicle?.(e.target.value)}
+              className="appearance-none px-3 py-2.5 pr-10 rounded-xl bg-gray-900/80 border border-gray-700 text-xs text-white font-semibold outline-none focus:border-sky-500/60 min-w-[200px] w-full cursor-pointer transition-all hover:border-gray-600"
+              title="Choose which vehicle's optimized route to show"
+            >
+              <option value="ALL">All vehicles</option>
+              {vehicles.map((v) => {
+                const vid = v.id || (v as any).vehicle_id;
+                return (
+                  <option key={vid} value={vid}>
+                    {vid} — {v.name}
+                  </option>
+                );
+              })}
+            </select>
+            <ChevronDown className="absolute right-2.5 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400 pointer-events-none" />
+          </div>
           <button
             onClick={() => setIsObstacleModalOpen(true)}
             className="px-4 py-2.5 rounded-xl bg-rose-500/20 hover:bg-rose-500/30 text-rose-300 border border-rose-500/30 text-xs font-semibold shadow-lg shadow-rose-500/10 transition-all flex items-center gap-1.5"
@@ -399,6 +403,58 @@ export const LiveRouteMap: React.FC<LiveRouteMapProps> = ({ warehouses, vehicles
       {planner}
 
       <SavingsBanner defaultKm={defaultDistanceKm} optimizedKm={totalDistanceKm} visible={optimizedAtLeastOnce} comparison={routeComparison} />
+
+      {/* Optimization Comparison: side-by-side naive vs optimized fleet metrics */}
+      {routeComparison && (
+        <div className="glass-panel p-4 rounded-2xl border border-gray-800">
+          <div className="flex items-center gap-2 mb-3">
+            <Zap className="w-4 h-4 text-amber-400" />
+            <h3 className="text-xs font-bold text-gray-400 uppercase tracking-wider">Optimization Comparison</h3>
+          </div>
+          <div className="grid grid-cols-3 gap-2 text-center mb-3">
+            <div>
+              <p className="text-[10px] text-gray-500 uppercase">Metric</p>
+            </div>
+            <div>
+              <p className="text-[10px] text-gray-500 uppercase">Naive</p>
+            </div>
+            <div>
+              <p className="text-[10px] text-gray-500 uppercase">Optimized</p>
+            </div>
+          </div>
+          <div className="space-y-2">
+            <div className="grid grid-cols-3 gap-2 items-center">
+              <span className="text-xs text-gray-400">Distance (km)</span>
+              <span className="text-right font-mono text-xs text-gray-400">{routeComparison.naive.distance_km.toFixed(1)}</span>
+              <span className="text-right font-mono text-xs text-sky-400">{routeComparison.optimized.distance_km.toFixed(1)}</span>
+            </div>
+            <div className="grid grid-cols-3 gap-2 items-center">
+              <span className="text-xs text-gray-400">Fuel (L)</span>
+              <span className="text-right font-mono text-xs text-gray-400">{routeComparison.naive.fuel_liters.toFixed(1)}</span>
+              <span className="text-right font-mono text-xs text-emerald-400">{routeComparison.optimized.fuel_liters.toFixed(1)}</span>
+            </div>
+            <div className="grid grid-cols-3 gap-2 items-center">
+              <span className="text-xs text-gray-400">CO₂ (kg)</span>
+              <span className="text-right font-mono text-xs text-gray-400">{routeComparison.naive.carbon_kg.toFixed(1)}</span>
+              <span className="text-right font-mono text-sky-400">{routeComparison.optimized.carbon_kg.toFixed(1)}</span>
+            </div>
+            <div className="grid grid-cols-3 gap-2 items-center">
+              <span className="text-xs text-gray-400">Cost (USD)</span>
+              <span className="text-right font-mono text-xs text-gray-400">${routeComparison.naive.cost_usd.toFixed(2)}</span>
+              <span className="text-right font-mono text-xs text-emerald-400">${routeComparison.optimized.cost_usd.toFixed(2)}</span>
+            </div>
+            <div className="border-t border-gray-800 pt-2 mt-2">
+              <div className="grid grid-cols-3 gap-2 items-center">
+                <span className="text-xs text-gray-400 font-semibold">Saved</span>
+                <span className="text-right font-mono text-xs text-gray-500">{routeComparison.saved.distance_km.toFixed(1)} km</span>
+                <span className="text-right font-mono text-xs text-rose-400">
+                  {routeComparison.saved_pct.distance.toFixed(1)}% vs {routeComparison.baseline_strategy}
+                </span>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {constraintReport && (
         <div className="glass-panel px-4 py-3 rounded-2xl border border-gray-800 flex items-start gap-3 text-xs text-gray-300">

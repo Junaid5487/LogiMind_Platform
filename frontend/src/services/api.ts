@@ -657,3 +657,58 @@ export async function fetchDemandForecast(
 }
 
 
+export async function fetchDbTables(): Promise<string[]> {
+  const res = await fetch(`${API_BASE_URL}/db/tables`, { headers: getHeaders() });
+  if (!res.ok) throw new Error('Failed to fetch db tables');
+  return await res.json();
+}
+
+export async function fetchDbSchema(table: string): Promise<any[]> {
+  const res = await fetch(`${API_BASE_URL}/db/schema/${encodeURIComponent(table)}`, { headers: getHeaders() });
+  if (!res.ok) throw new Error('Failed to fetch db schema');
+  return await res.json();
+}
+
+export async function fetchDbRows(table: string): Promise<any[]> {
+  const res = await fetch(`${API_BASE_URL}/db/${encodeURIComponent(table)}`, { headers: getHeaders() });
+  if (!res.ok) throw new Error('Failed to fetch db rows');
+  return await res.json();
+}
+
+export async function insertDbRow(table: string, payload: Record<string, any>): Promise<any> {
+  const res = await fetch(`${API_BASE_URL}/db/${encodeURIComponent(table)}`, {
+    method: 'POST',
+    headers: getHeaders({ 'Content-Type': 'application/json' }),
+    body: JSON.stringify(payload),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail || 'Failed to insert row');
+  }
+  return await res.json();
+}
+
+export async function updateDbRow(table: string, rowId: string, payload: Record<string, any>): Promise<any> {
+  const res = await fetch(`${API_BASE_URL}/db/${encodeURIComponent(table)}/${encodeURIComponent(rowId)}`, {
+    method: 'PUT',
+    headers: getHeaders({ 'Content-Type': 'application/json' }),
+    body: JSON.stringify(payload),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail || 'Failed to update row');
+  }
+  return await res.json();
+}
+
+export async function deleteDbRow(table: string, rowId: string): Promise<void> {
+  const res = await fetch(`${API_BASE_URL}/db/${encodeURIComponent(table)}/${encodeURIComponent(rowId)}`, {
+    method: 'DELETE',
+    headers: getHeaders(),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail || 'Failed to delete row');
+  }
+}
+

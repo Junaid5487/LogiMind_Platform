@@ -1,6 +1,5 @@
-import React, { useState } from 'react';
-import { useEffect } from 'react';
-import { LayoutDashboard, Navigation, Warehouse, Activity, Cpu, UserCheck, Truck, Boxes, Bot } from 'lucide-react';
+import React, { useState, useRef, useEffect } from 'react';
+import { LayoutDashboard, Navigation, Warehouse, Activity, Cpu, UserCheck, Truck, Boxes, Bot, Database } from 'lucide-react';
 
 interface NavItem {
   id: string;
@@ -16,6 +15,7 @@ const adminNav: NavItem[] = [
   { id: 'warehouse', label: 'Warehouse Hub', icon: Warehouse, roles: ['admin'] },
   { id: 'fleet', label: 'Fleet Health & XAI', icon: Activity, roles: ['admin'] },
   { id: 'simulator', label: 'Digital Twin Console', icon: Cpu, roles: ['admin'] },
+  { id: 'database', label: 'Database Entry', icon: Database, roles: ['admin'] },
 ];
 
 const fleetManagerNav: NavItem[] = [
@@ -47,6 +47,18 @@ interface NavbarProps {
 export const Navbar: React.FC<NavbarProps> = ({ activeTab, setActiveTab, onOpenCopilot }) => {
   const [role, setRole] = useState<string>('admin');
   const [isMenuOpen, setIsMenuOpen] = useState<boolean>(false);
+  const menuRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!isMenuOpen) return;
+    const handleClickOutside = (e: MouseEvent) => {
+      if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
+        setIsMenuOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, [isMenuOpen]);
 
   useEffect(() => {
     // Try to detect role from page body class
@@ -88,6 +100,8 @@ export const Navbar: React.FC<NavbarProps> = ({ activeTab, setActiveTab, onOpenC
     );
   });
 
+  const roleLabel = role.replace('_', ' ');
+
   return (
     <nav className='glass-panel sticky top-0 z-40 px-6 py-3 border-b border-gray-800 flex items-center justify-between'>
       <div className='flex items-center gap-3'>
@@ -104,50 +118,74 @@ export const Navbar: React.FC<NavbarProps> = ({ activeTab, setActiveTab, onOpenC
         {navItemButtons}
       </div>
 
-      <div className='flex items-center gap-2'>
+      <div className='relative' ref={menuRef}>
         <button
           onClick={() => setIsMenuOpen(!isMenuOpen)}
-          className='p-1.5 rounded-lg hover:bg-gray-700/50 text-gray-300 font-medium transition-all focus:outline-none focus:ring-2 focus:ring-purple-500'
+          className='flex items-center gap-1.5 p-1.5 rounded-lg hover:bg-gray-700/50 text-gray-300 font-medium transition-all focus:outline-none focus:ring-2 focus:ring-purple-500'
           aria-haspopup='menu'
           aria-expanded={isMenuOpen}
         >
-          <span className='text-gray-300'>{role.replace('_', ' ')}</span>
-          <svg className='w-4 h-4 text-gray-400' viewBox='0 0 24 24' fill='currentColor'>
+          <span className='text-gray-300 capitalize'>{roleLabel}</span>
+          <svg className={`w-4 h-4 text-gray-400 transition-transform ${isMenuOpen ? 'rotate-180' : ''}`} viewBox='0 0 24 24' fill='currentColor'>
             <path d='M6 9l6 6 6-6' />
           </svg>
         </button>
-      </div>
 
       {isMenuOpen && (
-        <div className='absolute right-0 mt-2 w-48 rounded-md bg-gray-800/90 p-2 shadow-lg border border-gray-700 z-50 min-w'>
+        <div className='absolute right-0 top-full mt-2 w-56 rounded-xl bg-gray-900/95 backdrop-blur p-2 shadow-2xl border border-gray-700 z-50'>
           <div className='space-y-1'>
-            <button
-              onClick={() => setRole('admin')}
-              className={['px-3 py-1.5 rounded-md text-sm font-medium transition-colors', role === 'admin' ? 'bg-sky-500/20 text-sky-400' : 'text-gray-300 hover:text-gray-200'].join(' ')}
-            >
-              Admin
-            </button>
-            <button
-              onClick={() => setRole('fleet_manager')}
-              className={['px-3 py-1.5 rounded-md text-sm font-medium transition-colors', role === 'fleet_manager' ? 'bg-sky-500/20 text-sky-400' : 'text-gray-300 hover:text-gray-200'].join(' ')}
-            >
-              Fleet Manager
-            </button>
-            <button
-              onClick={() => setRole('warehouse_manager')}
-              className={['px-3 py-1.5 rounded-md text-sm font-medium transition-colors', role === 'warehouse_manager' ? 'bg-sky-500/20 text-sky-400' : 'text-gray-300 hover:text-gray-200'].join(' ')}
-            >
-              Warehouse Manager
-            </button>
-            <button
-              onClick={() => setRole('driver')}
-              className={['px-3 py-1.5 rounded-md text-sm font-medium transition-colors', role === 'driver' ? 'bg-sky-500/20 text-sky-400' : 'text-gray-300 hover:text-gray-200'].join(' ')}
-            >
-              Driver
-            </button>
+            {navItems.map((item) => {
+              const Icon = item.icon;
+              const isActive = activeTab === item.id;
+              return (
+                <button
+                  key={item.id}
+                  onClick={() => { setActiveTab(item.id); setIsMenuOpen(false); }}
+                  className={['w-full px-3 py-2 rounded-lg text-sm font-medium transition-colors text-left flex items-center gap-2', isActive ? 'bg-sky-500/20 text-sky-400' : 'text-gray-300 hover:text-gray-200 hover:bg-gray-800/60'].join(' ')}
+                >
+                  <Icon className='w-4 h-4' />
+                  {item.label}
+                </button>
+              );
+            })}
+            <hr className='border-gray-700/60 my-1' />
+            <div className='px-2 py-1'>
+              <button
+                onClick={() => { setRole('admin'); setIsMenuOpen(false); }}
+                className={['w-full px-3 py-2 rounded-lg text-sm font-medium transition-colors text-left', role === 'admin' ? 'bg-sky-500/20 text-sky-400' : 'text-gray-300 hover:text-gray-200 hover:bg-gray-800/60'].join(' ')}
+              >
+                Switch to Admin
+              </button>
+            </div>
+            <div className='px-2 py-1'>
+              <button
+                onClick={() => { setRole('fleet_manager'); setIsMenuOpen(false); }}
+                className={['w-full px-3 py-1.5 rounded-md text-sm font-medium transition-colors text-left', role === 'fleet_manager' ? 'bg-sky-500/20 text-sky-400' : 'text-gray-300 hover:text-gray-200'].join(' ')}
+              >
+                Switch to Fleet Manager
+              </button>
+            </div>
+            <div className='px-2 py-1'>
+              <button
+                onClick={() => { setRole('warehouse_manager'); setIsMenuOpen(false); }}
+                className={['w-full px-3 py-1.5 rounded-md text-sm font-medium transition-colors text-left', role === 'warehouse_manager' ? 'bg-sky-500/20 text-sky-400' : 'text-gray-300 hover:text-gray-200'].join(' ')}
+              >
+                Switch to Warehouse Manager
+              </button>
+            </div>
+            <div className='px-2 py-1'>
+              <button
+                onClick={() => { setRole('driver'); setIsMenuOpen(false); }}
+                className={['w-full px-3 py-1.5 rounded-md text-sm font-medium transition-colors text-left', role === 'driver' ? 'bg-sky-500/20 text-sky-400' : 'text-gray-300 hover:text-gray-200'].join(' ')}
+              >
+                Switch to Driver
+              </button>
+            </div>
           </div>
         </div>
       )}
+
+      </div>
 
       <div className='flex items-center gap-3'>
         <button

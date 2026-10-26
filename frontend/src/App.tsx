@@ -14,6 +14,7 @@ import { WarehouseManagerPortal } from './components/WarehouseManagerPortal';
 import { fetchDashboardKPIs, fetchWarehouses, fetchVehicles, fetchScenarioOrders, fetchDefaultRoutes, fetchObstacles, optimizeRoutes } from './services/api';
 import type { DashboardKPIs, WarehouseItem, VehicleItem, RouteItem, ScenarioOrder, UserRole, RouteObstacle, RouteComparison, ConstraintReport } from './types';
 import { ScenarioPlanner } from './components/ScenarioPlanner';
+import { DatabaseEntry } from './components/DatabaseEntry';
 
 function MainApp() {
   const [activeTab, setActiveTab] = useState('dashboard');
@@ -185,6 +186,10 @@ function MainApp() {
             driverId={driverId}
             onStopCompleted={() => {}}
           />
+        )}
+
+        {activeTab === 'database' && (
+          <DatabaseEntry />
         )}
       </main>
 
