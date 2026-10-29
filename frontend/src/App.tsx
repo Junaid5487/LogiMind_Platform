@@ -185,6 +185,7 @@ function MainApp() {
           <DriverPortal
             driverId={driverId}
             onStopCompleted={() => {}}
+            onTripCompleted={reloadScenario}
           />
         )}
 

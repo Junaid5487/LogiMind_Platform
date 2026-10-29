@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import type { DriverActiveRoute, DriverRouteStop, RouteObstacle, ObstacleReportResult } from '../types';
-import { fetchDriverActiveRoute, updateDriverStopStatus, reportDriverObstacle, fetchObstacles, resolveObstacle, fetchDemoCoordinates } from '../services/api';
+import { fetchDriverActiveRoute, updateDriverStopStatus, reportDriverObstacle, fetchObstacles, resolveObstacle, fetchDemoCoordinates, completeDriverTrip } from '../services/api';
 import { MapContainer, TileLayer, Marker, Polyline, Circle, Popup, useMap } from 'react-leaflet';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
@@ -9,6 +9,7 @@ import { Truck, RotateCcw, Gauge, Clock, Home, CheckCircle2, AlertTriangle, MapP
 interface DriverPortalProps {
   driverId?: string;
   onStopCompleted?: (stop: DriverRouteStop) => void;
+  onTripCompleted?: () => void;
 }
 
 const OBSTACLE_TYPES: Array<{ value: string; label: string }> = [
@@ -218,10 +219,12 @@ const DriverTravelMap: React.FC<DriverTravelMapProps> = ({
 export const DriverPortal: React.FC<DriverPortalProps> = ({
   driverId = 'DRV-01',
   onStopCompleted,
+  onTripCompleted,
 }) => {
   const [activeRoute, setActiveRoute] = useState<DriverActiveRoute | null>(null);
   const [currentStopIndex, setCurrentStopIndex] = useState<number>(0);
   const [tripStarted, setTripStarted] = useState<boolean>(false);
+  const [completingTrip, setCompletingTrip] = useState<boolean>(false);
   const [loading, setLoading] = useState<boolean>(true);
   const [exceptionNote, setExceptionNote] = useState<string>('');
   const [error, setError] = useState<string>('');
@@ -281,6 +284,24 @@ export const DriverPortal: React.FC<DriverPortalProps> = ({
       });
       onStopCompleted?.(stop);
     } catch (e: any) { setError(e.message || 'Failed to confirm delivery'); }
+  };
+
+  const handleCompleteTrip = async () => {
+    if (!activeRoute) return;
+    setCompletingTrip(true);
+    setError('');
+    try {
+      const res = await completeDriverTrip(driverId);
+      const updated = res?.updated_shift || { ...activeRoute, trip_status: res?.trip_status || res?.new_status || 'COMPLETED' };
+      setActiveRoute(updated);
+      setTripStarted(false);
+      window.dispatchEvent(new CustomEvent('logimind:trip-completed', { detail: { driverId, tripStatus: updated.trip_status } }));
+      onTripCompleted?.();
+    } catch (e: any) {
+      setError(e.message || 'Failed to complete trip');
+    } finally {
+      setCompletingTrip(false);
+    }
   };
 
   const handleReportException = async (status: 'DELAYED' | 'IN_TRANSIT') => {
@@ -442,8 +463,8 @@ export const DriverPortal: React.FC<DriverPortalProps> = ({
         </div>
 
         <div className="flex items-center gap-2">
-          <span className={`px-2.5 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider border ${activeRoute.trip_status === 'IN_PROGRESS' ? 'bg-emerald-500/20 text-emerald-400 border-emerald-500/30' : 'bg-amber-500/20 text-amber-400 border-amber-500/30'}`}>
-            {activeRoute.trip_status === 'IN_PROGRESS' ? 'ON SHIFT' : 'OFF SHIFT'}
+          <span className={`px-2.5 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider border ${activeRoute.trip_status === 'COMPLETED' ? 'bg-emerald-500/20 text-emerald-400 border-emerald-500/30' : activeRoute.trip_status === 'IN_PROGRESS' ? 'bg-emerald-500/20 text-emerald-400 border-emerald-500/30' : 'bg-amber-500/20 text-amber-400 border-amber-500/30'}`}>
+            {activeRoute.trip_status === 'COMPLETED' ? 'TRIP COMPLETE' : activeRoute.trip_status === 'IN_PROGRESS' ? 'ON SHIFT' : 'OFF SHIFT'}
           </span>
           <button onClick={loadRoute} className="p-1.5 rounded-lg hover:bg-gray-800 text-gray-400 hover:text-gray-200 transition-all" title="Refresh"><RotateCcw className="w-4 h-4" /></button>
         </div>
@@ -580,15 +601,27 @@ export const DriverPortal: React.FC<DriverPortalProps> = ({
         <section className="glass-panel p-4 rounded-2xl border border-gray-800 space-y-3">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2">
-              {activeRoute.trip_status === 'IN_PROGRESS' ? <><CheckCircle2 className="w-4 h-4 text-emerald-400" /><span className="text-sm font-bold text-emerald-400">Trip Active</span></> : <><Gauge className="w-4 h-4 text-amber-400" /><span className="text-sm font-bold text-amber-400">Trip Ready</span></>}
+              {activeRoute.trip_status === 'COMPLETED' ? <><CheckCircle2 className="w-4 h-4 text-emerald-400" /><span className="text-sm font-bold text-emerald-400">Trip Completed</span></> : activeRoute.trip_status === 'IN_PROGRESS' ? <><CheckCircle2 className="w-4 h-4 text-emerald-400" /><span className="text-sm font-bold text-emerald-400">Trip Active</span></> : <><Gauge className="w-4 h-4 text-amber-400" /><span className="text-sm font-bold text-amber-400">Trip Ready</span></>}
             </div>
             <span className="text-xs text-gray-400">{activeRoute.trip_status}</span>
           </div>
 
-          {!tripStarted && activeRoute.trip_status !== 'IN_PROGRESS' && (
+          {activeRoute.trip_status !== 'COMPLETED' && !tripStarted && activeRoute.trip_status !== 'IN_PROGRESS' && (
             <button onClick={handleStartTrip} className="w-full px-4 py-2.5 rounded-xl bg-gradient-to-r from-sky-500 to-indigo-600 hover:from-sky-400 hover:to-indigo-500 text-white text-xs font-bold shadow-lg shadow-sky-500/20 transition-all">Start Shift / Begin Trip</button>
           )}
-          {tripStarted && <div className="text-xs text-gray-400 text-center">Trip started. You are on stop <strong>{currentStopIndex + 1}</strong> of <strong>{stops.length}</strong>.</div>}
+          {activeRoute.trip_status !== 'COMPLETED' && tripStarted && <div className="text-xs text-gray-400 text-center">Trip started. You are on stop <strong>{currentStopIndex + 1}</strong> of <strong>{stops.length}</strong>.</div>}
+          {activeRoute.trip_status !== 'COMPLETED' && (
+            <button
+              onClick={handleCompleteTrip}
+              disabled={completingTrip}
+              className="w-full px-4 py-2.5 rounded-xl bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-400 hover:to-teal-500 text-white text-xs font-bold shadow-lg shadow-emerald-500/20 transition-all disabled:opacity-50"
+            >
+              {completingTrip ? 'Completing Trip...' : 'Mark Trip Complete'}
+            </button>
+          )}
+          {activeRoute.trip_status === 'COMPLETED' && (
+            <div className="text-xs text-emerald-400 text-center font-bold">Trip completed. Status updated across the platform.</div>
+          )}
         </section>
         {/* Delivery Itinerary */}
         <section>

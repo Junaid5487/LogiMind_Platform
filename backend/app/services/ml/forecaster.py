@@ -1,10 +1,26 @@
-from typing import Dict, Any, List
+﻿from typing import Dict, Any
 import math
+import time
+
+# In-memory cache keeping a 7-day forecast stable for 7 days. Keyed by
+# (warehouse_id, sku, horizon_days). The underlying generator is already a
+# pure function of those inputs, so this only avoids recomputation and keeps
+# the displayed 7-day window from drifting between calls.
+_FORECAST_CACHE: dict = {}
+_FORECAST_TTL_SECONDS = 7 * 24 * 60 * 60  # 7 days
+
 
 class DemandForecaster:
     def forecast_warehouse_demand(self, warehouse_id: str, sku: str, horizon_days: int = 7) -> Dict[str, Any]:
         horizon = max(3, min(30, int(horizon_days or 7)))
-        
+        cache_key = (str(warehouse_id), str(sku), horizon)
+        now = time.time()
+        cached = _FORECAST_CACHE.get(cache_key)
+        if cached is not None:
+            ts, value = cached
+            if now - ts < _FORECAST_TTL_SECONDS:
+                return value
+
         # Base demand patterned by SKU type
         if "PHAR" in sku:
             base_demand = 35
@@ -41,7 +57,7 @@ class DemandForecaster:
         avg_daily = round(total_vol / horizon, 1)
         safety_stock = int(round(avg_daily * 1.65 * math.sqrt(3)))  # 95% service level with 3-day lead time
 
-        return {
+        result = {
             "warehouse_id": warehouse_id,
             "sku": sku,
             "horizon_days": horizon,
@@ -51,6 +67,7 @@ class DemandForecaster:
             "reorder_urgency": "WARNING" if total_vol > 500 else "NORMAL",
             "daily_forecast": daily_predictions,
             "model_version": "Facebook Prophet v1.1.5 + LightGBM Ensemble",
-            "summary_text": f"Projected total demand of {total_vol} units across next {horizon} days (avg {avg_daily}/day). Safety stock buffer: {safety_stock} units."
+            "summary_text": f"Projected total demand of {total_vol} units across next {horizon} days (avg {avg_daily}/day). Safety stock buffer: {safety_stock} units.",
         }
-
+        _FORECAST_CACHE[cache_key] = (now, result)
+        return result

@@ -110,6 +110,11 @@ export const FleetManagerPortal: React.FC<FleetManagerPortalProps> = ({ vehicles
   const [conditionInspections, setConditionInspections] = useState<InspectionLogItem[]>([]);
 
   useEffect(() => { loadDrivers(); loadWarehouses(); loadObstacles(); loadLedger(); }, []);
+  useEffect(() => {
+    const handler = () => { loadDrivers(); };
+    window.addEventListener('logimind:trip-completed', handler);
+    return () => window.removeEventListener('logimind:trip-completed', handler);
+  }, []);
 
 
 

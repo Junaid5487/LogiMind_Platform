@@ -6,6 +6,7 @@ from fastapi.responses import FileResponse
 
 from app.config.settings import settings
 from app.core.logging import setup_logging, logger
+from app.services.activity_simulator import start_activity_simulator
 from app.core.exceptions import (
     LogiMindException, logimind_exception_handler, unhandled_exception_handler
 )
@@ -105,5 +106,9 @@ def startup_event():
             db.close()
     except Exception as exc:
         logger.error(f"Database schema check failed: {exc}", exc_info=True)
+    try:
+        start_activity_simulator()
+    except Exception as exc:
+        logger.error(f"Activity simulator failed to start: {exc}", exc_info=True)
     logger.info(f"=== {settings.PROJECT_NAME} Initialized Successfully ===")
 
