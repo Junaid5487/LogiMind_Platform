@@ -115,6 +115,7 @@ export interface DashboardKPIs {
   warehouse_capacity_trend: string;
   dollar_savings: number;
   co2_trend: string;
+  monthly_fuel_savings?: number;
 }
 
 export interface WarehouseItem {

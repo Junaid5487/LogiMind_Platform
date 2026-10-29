@@ -69,6 +69,25 @@ function MainApp() {
     loadData();
   }, []);
 
+  // Periodically refresh KPIs + fleet/warehouse counts so dashboard reflects simulator changes
+  useEffect(() => {
+    const id = setInterval(async () => {
+      try {
+        const [kpiRes, whRes, vehRes] = await Promise.all([
+          fetchDashboardKPIs(),
+          fetchWarehouses(),
+          fetchVehicles(),
+        ]);
+        setKpis(kpiRes);
+        setWarehouses(whRes);
+        setVehicles(vehRes);
+      } catch (e) {
+        // ignore transient errors
+      }
+    }, 15000);
+    return () => clearInterval(id);
+  }, []);
+
   const handleRunVrpOptimization = async () => {
     setLoadingVrp(true);
     try {
