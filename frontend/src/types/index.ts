@@ -503,3 +503,9 @@ export interface DemandForecastResult {
 }
 
 
+export interface ActivityChangeItem {
+  timestamp: string;
+  description: string;
+  changed: boolean;
+  error?: string;
+}

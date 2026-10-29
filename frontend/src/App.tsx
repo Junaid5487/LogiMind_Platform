@@ -15,6 +15,7 @@ import { fetchDashboardKPIs, fetchWarehouses, fetchVehicles, fetchScenarioOrders
 import type { DashboardKPIs, WarehouseItem, VehicleItem, RouteItem, ScenarioOrder, UserRole, RouteObstacle, RouteComparison, ConstraintReport } from './types';
 import { ScenarioPlanner } from './components/ScenarioPlanner';
 import { DatabaseEntry } from './components/DatabaseEntry';
+import { LiveChanges } from './components/LiveChanges';
 
 function MainApp() {
   const [activeTab, setActiveTab] = useState('dashboard');
@@ -191,6 +192,10 @@ function MainApp() {
 
         {activeTab === 'database' && (
           <DatabaseEntry />
+        )}
+
+        {activeTab === 'livechanges' && (
+          <LiveChanges />
         )}
       </main>
 

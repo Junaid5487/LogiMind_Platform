@@ -4,7 +4,8 @@ import type {
   ShiftInventoryResult, ScenarioOrder, DefaultRoutesResult, SkuAvailability,
   RebalanceResult, RouteObstacle, ObstacleReportResult, OptimizeResult,
   DispatchResult, RouteLedgerResult, CopilotAuditEntry,
-  VehicleConditionPayload, VehicleConditionResult, InspectionLogItem, DemandForecastResult
+  VehicleConditionPayload, VehicleConditionResult, InspectionLogItem, DemandForecastResult,
+  ActivityChangeItem
 } from '../types';
 
 const API_BASE_URL = typeof window !== 'undefined' && window.location.origin.includes('5173')
@@ -728,3 +729,24 @@ export async function deleteDbRow(table: string, rowId: string): Promise<void> {
   }
 }
 
+export async function fetchActivityChanges(limit: number = 100): Promise<ActivityChangeItem[]> {
+  try {
+    const res = await fetch(`${API_BASE_URL}/activity/recent?limit=${limit}`, { headers: getHeaders() });
+    if (!res.ok) throw new Error('Failed to fetch activity changes');
+    const data = await res.json();
+    return (data.items || []) as ActivityChangeItem[];
+  } catch (e) {
+    return [];
+  }
+}
+export async function triggerActivityChange(): Promise<{ status: string; description: string }> {
+  const res = await fetch(`${API_BASE_URL}/activity/run`, {
+    method: 'POST',
+    headers: getHeaders(),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail || 'Failed to trigger activity');
+  }
+  return await res.json();
+}

@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { LayoutDashboard, Navigation, Warehouse, Activity, Cpu, UserCheck, Truck, Boxes, Bot, Database } from 'lucide-react';
+import { LayoutDashboard, Navigation, Warehouse, Activity, Cpu, UserCheck, Truck, Boxes, Bot, Database, Clock } from 'lucide-react';
 
 interface NavItem {
   id: string;
@@ -16,6 +16,7 @@ const adminNav: NavItem[] = [
   { id: 'fleet', label: 'Fleet Health & XAI', icon: Activity, roles: ['admin'] },
   { id: 'simulator', label: 'Digital Twin Console', icon: Cpu, roles: ['admin'] },
   { id: 'database', label: 'Database Entry', icon: Database, roles: ['admin'] },
+  { id: 'livechanges', label: 'Live Changes', icon: Clock, roles: ['admin'] },
 ];
 
 const fleetManagerNav: NavItem[] = [

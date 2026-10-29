@@ -1,9 +1,11 @@
-﻿"""Background activity simulator."""
+"""Background activity simulator."""
 import os
 import time
 import random
 import threading
-from typing import Optional
+from typing import Optional, Dict, List
+import collections
+from datetime import datetime, timezone
 
 from sqlalchemy.orm import Session
 
@@ -212,9 +214,56 @@ def perform_random_mutation(db: Session) -> Optional[str]:
 
 _started = False
 _lock = threading.Lock()
+_history = collections.deque(maxlen=500)
+_history_lock = threading.Lock()
+_last_run = None
+_interval = 0
+_disabled = False
+_history = collections.deque(maxlen=500)
+_history_lock = threading.Lock()
+_last_run = None
+_interval = 0
+_disabled = False
+
+
+def record_activity(description: str, changed: bool = True, error: Optional[str] = None):
+    global _last_run
+    entry = {
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "description": description,
+        "changed": changed,
+    }
+    if error:
+        entry["error"] = error
+    with _history_lock:
+        _history.appendleft(entry)
+        _last_run = entry["timestamp"]
+
+
+def get_recent_activity(limit: int = 100) -> List[Dict]:
+    with _history_lock:
+        items = list(_history)
+    return items[:limit]
+
+
+def get_activity_count() -> int:
+    with _history_lock:
+        return len(_history)
+
+
+def get_simulator_status() -> Dict:
+    return {
+        "started": _started,
+        "disabled": _disabled,
+        "interval_seconds": _interval,
+        "last_run_at": _last_run,
+        "history_size": get_activity_count(),
+    }
 
 
 def _loop(interval: int):
+    global _interval, _disabled
+    _interval = interval
     while True:
         time.sleep(interval)
         try:
@@ -224,23 +273,27 @@ def _loop(interval: int):
                 if desc:
                     db.commit()
                     logger.info(f"[activity] {desc}")
+                    record_activity(desc, changed=True)
                 else:
                     db.rollback()
                     logger.info("[activity] no eligible mutation this cycle")
+                    record_activity("No eligible mutation this cycle", changed=False)
             finally:
                 db.close()
         except Exception as exc:
             logger.error(f"Activity simulator cycle failed: {exc}", exc_info=True)
+            record_activity(f"Cycle failed: {exc}", changed=False, error=str(exc))
 
 
 def start_activity_simulator():
-    global _started
+    global _started, _disabled
     with _lock:
         if _started:
             return
         _started = True
     interval = int(os.getenv("LOGIMIND_ACTIVITY_INTERVAL", "300"))
     if interval <= 0:
+        _disabled = True
         logger.info("Activity simulator disabled (LOGIMIND_ACTIVITY_INTERVAL<=0)")
         return
     t = threading.Thread(target=_loop, args=(interval,), daemon=True, name="logimind-activity")
