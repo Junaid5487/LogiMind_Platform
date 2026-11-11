@@ -16,6 +16,7 @@ import type { DashboardKPIs, WarehouseItem, VehicleItem, RouteItem, ScenarioOrde
 import { ScenarioPlanner } from './components/ScenarioPlanner';
 import { DatabaseEntry } from './components/DatabaseEntry';
 import { LiveChanges } from './components/LiveChanges';
+import { MlPredictor } from './components/MlPredictor';
 
 function MainApp() {
   const [activeTab, setActiveTab] = useState('dashboard');
@@ -69,7 +70,6 @@ function MainApp() {
     loadData();
   }, []);
 
-  // Periodically refresh KPIs + fleet/warehouse counts so dashboard reflects simulator changes
   useEffect(() => {
     const id = setInterval(async () => {
       try {
@@ -150,6 +150,10 @@ function MainApp() {
             isOptimizing={loadingVrp}
             onNavigate={setActiveTab}
           />
+        )}
+
+        {(activeTab === 'mlpredictor' || activeTab === 'forecast') && (
+          <MlPredictor onNavigate={setActiveTab} />
         )}
 
         {activeTab === 'routemap' && (

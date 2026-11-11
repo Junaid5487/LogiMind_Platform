@@ -19,6 +19,8 @@ __pycache__/
 # Local dev logs
 frontend-dev.log
 *.log
+*.err
+.vite/
 
 # Experiment caches (regenerate with experiments/README.md commands)
 experiments/data/

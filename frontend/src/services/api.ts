@@ -5,7 +5,7 @@ import type {
   RebalanceResult, RouteObstacle, ObstacleReportResult, OptimizeResult,
   DispatchResult, RouteLedgerResult, CopilotAuditEntry,
   VehicleConditionPayload, VehicleConditionResult, InspectionLogItem, DemandForecastResult,
-  ActivityChangeItem
+  ActivityChangeItem, ProductForecastItem, VehicleForecastRequirements, MlPredictorAnalytics
 } from '../types';
 
 const API_BASE_URL = typeof window !== 'undefined' && window.location.origin.includes('5173')
@@ -484,6 +484,46 @@ export async function addInventoryItem(payload: CreateInventoryItemPayload): Pro
   return await res.json();
 }
 
+export interface AddItemToHubPayload {
+  warehouse_id: string;
+  sku: string;
+  item_name: string;
+  quantity: number;
+  reorder_threshold?: number;
+  unit?: string;
+  // Optional delivery fields
+  customer_name?: string;
+  delivery_address?: string;
+  dest_lat?: number;
+  dest_lng?: number;
+  weight_kg?: number;
+}
+
+export async function addItemToHub(payload: AddItemToHubPayload): Promise<{ status: string; item: InventoryItem; delivery_order?: any; route?: any }> {
+  const res = await fetch(API_BASE_URL + '/warehouses/' + payload.warehouse_id + '/items', {
+    method: 'POST',
+    headers: getHeaders({ 'Content-Type': 'application/json' }),
+    body: JSON.stringify({
+      sku: payload.sku,
+      item_name: payload.item_name,
+      quantity: payload.quantity,
+      reorder_threshold: payload.reorder_threshold ?? 10,
+      unit: payload.unit ?? 'units',
+      customer_name: payload.customer_name,
+      delivery_address: payload.delivery_address,
+      dest_lat: payload.dest_lat,
+      dest_lng: payload.dest_lng,
+      weight_kg: payload.weight_kg,
+    }),
+  });
+  if (!res.ok) {
+    let detail = 'Failed to add item to hub';
+    try { const err = await res.json(); detail = err.detail || err.message || detail; } catch { }
+    throw new Error(detail);
+  }
+  return await res.json();
+}
+
 export async function removeInventoryItem(inventoryId: string): Promise<{ status: string; item: InventoryItem }> {
   const res = await fetch(`${API_BASE_URL}/inventory/${inventoryId}`, {
     method: 'DELETE',
@@ -750,3 +790,36 @@ export async function triggerActivityChange(): Promise<{ status: string; descrip
   }
   return await res.json();
 }
+
+export async function fetchProductDemandForecast(warehouseId = 'ALL', horizonDays = 7, multiplier = 1.0): Promise<ProductForecastItem[]> {
+  const res = await fetch(`${API_BASE_URL}/forecast/products?warehouse_id=${encodeURIComponent(warehouseId)}&horizon_days=${horizonDays}&multiplier=${multiplier}`, {
+    headers: getHeaders(),
+  });
+  if (!res.ok) throw new Error('Failed to fetch product forecasts');
+  return await res.json();
+}
+
+export async function fetchVehicleRequirementsForecast(warehouseId = 'ALL', horizonDays = 7, exportMode = true, multiplier = 1.0): Promise<VehicleForecastRequirements> {
+  const res = await fetch(`${API_BASE_URL}/forecast/vehicles-needed?warehouse_id=${encodeURIComponent(warehouseId)}&horizon_days=${horizonDays}&export=${exportMode}&multiplier=${multiplier}`, {
+    headers: getHeaders(),
+  });
+  if (!res.ok) throw new Error('Failed to fetch vehicle requirements forecast');
+  return await res.json();
+}
+
+export async function fetchWarehouseForecastSummary(warehouseId = 'ALL', horizonDays = 7, multiplier = 1.0): Promise<any> {
+  const res = await fetch(`${API_BASE_URL}/forecast/summary?warehouse_id=${encodeURIComponent(warehouseId)}&horizon_days=${horizonDays}&multiplier=${multiplier}`, {
+    headers: getHeaders(),
+  });
+  if (!res.ok) throw new Error('Failed to fetch warehouse forecast summary');
+  return await res.json();
+}
+
+export async function fetchMlPredictorAnalytics(warehouseId = 'ALL', horizonDays = 7, mode: 'EXPORT' | 'IMPORT' = 'EXPORT', multiplier = 1.0): Promise<MlPredictorAnalytics> {
+  const res = await fetch(`${API_BASE_URL}/forecast/analytics?warehouse_id=${encodeURIComponent(warehouseId)}&horizon_days=${horizonDays}&mode=${mode}&multiplier=${multiplier}`, {
+    headers: getHeaders(),
+  });
+  if (!res.ok) throw new Error('Failed to fetch ML predictor analytics');
+  return await res.json();
+}
+

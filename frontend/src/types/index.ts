@@ -422,7 +422,9 @@ export interface ScenarioOrder {
   priority: string;
   status: string;
   warehouse_id?: string | null;
+  delivery_address?: string;
   created_at?: string;
+  delivered_at?: string;
 }
 
 export interface DefaultRoutesResult {
@@ -509,4 +511,114 @@ export interface ActivityChangeItem {
   description: string;
   changed: boolean;
   error?: string;
+}
+
+export interface ProductForecastItem {
+  sku: string;
+  item_name: string;
+  quantity?: number;
+  current_quantity: number;
+  total_predicted_volume: number;
+  average_daily_volume: number;
+  recommended_safety_stock: number;
+  days_of_inventory: number;
+  reorder_urgency: 'NORMAL' | 'WARNING' | 'CRITICAL';
+  handling_type: string;
+  unit_weight_kg: number;
+  unit?: string;
+  surplus_deficit?: number;
+  daily_forecast: DailyDemandPrediction[];
+}
+
+export interface VehicleForecastRequirements {
+  warehouse_id: string;
+  horizon_days: number;
+  mode: 'EXPORT' | 'IMPORT';
+  export: boolean;
+  total_predicted_volume: number;
+  total_weight_kg: number;
+  vehicles_needed: number;
+  estimated_trips: number;
+  average_vehicle_capacity_kg: number;
+  vehicle_type_breakdown: Record<string, number>;
+  active_fleet_count: number;
+  fleet_readiness_pct: number;
+  logistics_metrics: {
+    estimated_distance_km: number;
+    fuel_diesel_liters: number;
+    ev_energy_kwh: number;
+    co2_emissions_kg: number;
+    ev_co2_savings_kg: number;
+    estimated_cost_inr: number;
+  };
+  product_forecasts_count: number;
+}
+
+export interface WarehouseStorageBreakdown {
+  warehouse_id: string;
+  warehouse_name: string;
+  city: string;
+  capacity_sqft: number;
+  max_unit_capacity: number;
+  current_units: number;
+  projected_units: number;
+  current_utilization_pct: number;
+  projected_utilization_pct: number;
+  pallets_required: number;
+  status: 'OPTIMAL' | 'NEAR_CAPACITY' | 'OVERFLOW_RISK';
+}
+
+export interface StorageForecasterData {
+  capacity_sqft: number;
+  max_unit_capacity?: number;
+  current_units: number;
+  projected_units: number;
+  current_utilization_pct: number;
+  projected_utilization_pct: number;
+  pallets_required: number;
+  status: 'OPTIMAL' | 'NEAR_CAPACITY' | 'OVERFLOW_RISK';
+  warehouses_breakdown?: WarehouseStorageBreakdown[];
+}
+
+export interface ProcurementForecasterItem {
+  sku: string;
+  item_name: string;
+  urgency: 'NORMAL' | 'WARNING' | 'CRITICAL';
+  current_qty: number;
+  predicted_demand: number;
+  safety_stock: number;
+  suggested_po_qty: number;
+  lead_time_days: number;
+  days_remaining: number;
+}
+
+export interface MlPredictorAnalytics {
+  warehouse_id: string;
+  horizon_days: number;
+  mode: 'EXPORT' | 'IMPORT';
+  what_if_multiplier: number;
+  model_metadata: {
+    engine: string;
+    confidence_score_pct: number;
+    features_used: string[];
+  };
+  summary: {
+    total_predicted_volume: number;
+    total_safety_stock: number;
+    total_on_hand: number;
+    critical_stockouts_count: number;
+    warning_stockouts_count: number;
+    products_forecasted: number;
+    export_vehicles_needed: number;
+    import_vehicles_needed: number;
+    vehicles_needed: number;
+    vehicle_type_breakdown: Record<string, number>;
+    most_urgent_sku: string;
+    most_urgent_predicted: number;
+    summary_text: string;
+  };
+  products: ProductForecastItem[];
+  vehicle_requirements: VehicleForecastRequirements;
+  storage_forecaster: StorageForecasterData;
+  procurement_forecaster: ProcurementForecasterItem[];
 }

@@ -106,6 +106,7 @@ class Order(Base):
     priority = Column(String(30), default="NORMAL")
     status = Column(String(30), default="PENDING")
     created_at = Column(DateTime, default=datetime.utcnow)
+    delivered_at = Column(DateTime, nullable=True)
 
 class Product(Base):
     __tablename__ = "products"

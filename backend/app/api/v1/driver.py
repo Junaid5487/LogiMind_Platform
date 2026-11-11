@@ -1,6 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException, Body
 from pydantic import BaseModel, Field
 from typing import Dict, Any, List, Optional
+from datetime import datetime
 from sqlalchemy.orm import Session
 import random
 
@@ -174,7 +175,7 @@ def get_driver_active_route(driver_id: str = "DRV-01"):
     return shift
 
 @router.post("/stops/{order_id}/status", response_model=Dict[str, Any])
-def update_delivery_stop_status(order_id: str, req: UpdateStopStatusRequest, driver_id: str = "DRV-01"):
+def update_delivery_stop_status(order_id: str, req: UpdateStopStatusRequest, driver_id: str = "DRV-01", db: Session = Depends(get_db_session)):
     shift = DRIVER_SHIFTS.get(driver_id, DRIVER_SHIFTS["DRV-01"])
     route = shift.get("assigned_route", {})
     stops = route.get("stops", [])
@@ -196,6 +197,21 @@ def update_delivery_stop_status(order_id: str, req: UpdateStopStatusRequest, dri
 
     if not found:
         raise HTTPException(status_code=404, detail=f"Order {order_id} not found in driver shift")
+
+    # Persist delivery completion to the database-backed Order record so the
+    # warehouse manager / dashboard sees the order as DELIVERED.
+    if req.status == "DELIVERED":
+        try:
+            order = db.query(Order).filter(Order.order_id == order_id).first()
+            if order is not None:
+                order.status = "DELIVERED"
+                order.delivered_at = datetime.utcnow()
+                db.commit()
+        except Exception:
+            try:
+                db.rollback()
+            except Exception:
+                pass
 
     return {
         "status": "SUCCESS",
@@ -276,6 +292,7 @@ def complete_trip(
                 order = db.query(Order).filter(Order.order_id == order_id).first()
                 if order is not None:
                     order.status = "DELIVERED"
+                    order.delivered_at = datetime.utcnow()
 
             if vehicle_id:
                 for trip in db.query(Trip).filter(Trip.vehicle_id == vehicle_id, Trip.status == "IN_PROGRESS").all():

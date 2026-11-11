@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import type { WarehouseItem, InventoryItem, SkuAvailability, DemandForecastResult } from '../types';
-import { fetchInventory, fetchSkuAvailability, addInventoryItem, updateInventoryItem, removeInventoryItem, shiftInventory, addWarehouse, removeWarehouse, fetchDemandForecast } from '../services/api';
-import { Boxes, Plus, Trash2, ArrowRightLeft, AlertTriangle, PackageCheck, Warehouse, PackagePlus, Search, Pencil, ChevronDown, ChevronLeft, ChevronRight, TrendingUp, BarChart2, Calendar, X, AlertCircle, CheckCircle } from 'lucide-react';
+import { fetchInventory, fetchSkuAvailability, addInventoryItem, updateInventoryItem, removeInventoryItem, shiftInventory, addWarehouse, removeWarehouse, addItemToHub, fetchDemandForecast } from '../services/api';
+import { Boxes, Plus, Trash2, ArrowRightLeft, AlertTriangle, PackageCheck, Warehouse, PackagePlus, Search, Pencil, ChevronDown, ChevronLeft, ChevronRight, TrendingUp, BarChart2, Calendar, X, AlertCircle, CheckCircle, MapPin } from 'lucide-react';
 import { ResponsiveContainer, AreaChart, Area, XAxis, YAxis, Tooltip, CartesianGrid } from 'recharts';
 
 
@@ -42,6 +42,12 @@ export const WarehouseManagerPortal: React.FC<WarehouseManagerPortalProps> = ({ 
   const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
   const [tableSearch, setTableSearch] = useState('');
   const [hubFilter, setHubFilter] = useState('ALL');
+  const [selectedHubId, setSelectedHubId] = useState<string>('');
+  const [itemToHubForm, setItemToHubForm] = useState({ sku: '', item_name: '', quantity: '', reorder_threshold: '10', unit: 'units' });
+  const [deliveryForm, setDeliveryForm] = useState({ customer_name: '', delivery_address: '', dest_lat: '', dest_lng: '', weight_kg: '' });
+  const [itemToHubBusy, setItemToHubBusy] = useState<boolean>(false);
+  const [lastDeliveryOrder, setLastDeliveryOrder] = useState<any>(null);
+  const [lastRoute, setLastRoute] = useState<any>(null);
   const [statusFilter, setStatusFilter] = useState('ALL');
   const [sortKey, setSortKey] = useState<'sku' | 'qty' | 'hub'>('sku');
   const [sortDir, setSortDir] = useState<1 | -1>(1);
@@ -190,6 +196,46 @@ export const WarehouseManagerPortal: React.FC<WarehouseManagerPortalProps> = ({ 
       await onReload();
     } catch (err: any) {
       notify('error', err.message || 'Failed to add item');
+    }
+  };
+
+  const handleAddItemToHub = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!selectedHubId) { notify('error', 'Please choose a hub first'); return; }
+    if (!itemToHubForm.sku.trim() || !itemToHubForm.item_name.trim()) { notify('error', 'SKU and item name are required'); return; }
+    const quantity = Number(itemToHubForm.quantity);
+    const reorder_threshold = Number(itemToHubForm.reorder_threshold);
+    if (!Number.isFinite(quantity) || quantity < 0) { notify('error', 'Quantity must be >= 0'); return; }
+    if (!Number.isFinite(reorder_threshold) || reorder_threshold < 0) { notify('error', 'Reorder threshold must be >= 0'); return; }
+    setItemToHubBusy(true);
+    try {
+      const res = await addItemToHub({
+        warehouse_id: selectedHubId,
+        sku: itemToHubForm.sku.trim(),
+        item_name: itemToHubForm.item_name.trim(),
+        quantity,
+        reorder_threshold,
+        unit: itemToHubForm.unit.trim() || 'units',
+        customer_name: deliveryForm.customer_name.trim() || undefined,
+        delivery_address: deliveryForm.delivery_address.trim() || undefined,
+        dest_lat: deliveryForm.dest_lat.trim() ? Number(deliveryForm.dest_lat) : undefined,
+        dest_lng: deliveryForm.dest_lng.trim() ? Number(deliveryForm.dest_lng) : undefined,
+        weight_kg: deliveryForm.weight_kg.trim() ? Number(deliveryForm.weight_kg) : undefined,
+      });
+      notify('success', res.status === 'MERGED' ? `Stock merged into ${res.item.sku} at ${whName(selectedHubId)}` : `Item ${res.item.sku} added to ${whName(selectedHubId)}`);
+      setItemToHubForm({ sku: '', item_name: '', quantity: '', reorder_threshold: '10', unit: 'units' });
+      setDeliveryForm({ customer_name: '', delivery_address: '', dest_lat: '', dest_lng: '', weight_kg: '' });
+      if (res.delivery_order) {
+        setLastDeliveryOrder(res.delivery_order);
+        setLastRoute(res.route);
+        notify('success', `Delivery order ${res.delivery_order.order_id} created for ${res.delivery_order.customer_name}`);
+      }
+      await loadInventory();
+      await onReload();
+    } catch (err: any) {
+      notify('error', err.message || 'Failed to add item to hub');
+    } finally {
+      setItemToHubBusy(false);
     }
   };
 
@@ -391,6 +437,117 @@ export const WarehouseManagerPortal: React.FC<WarehouseManagerPortalProps> = ({ 
             </button>
           </div>
         </div>
+
+        {/* Choose a hub, then enter item details to type stock into that hub */}
+        {selectedHubId || warehouses.length > 0 && (
+          <div className="bg-gray-900/40 border border-gray-800 rounded-xl p-3 space-y-2">
+            <div className="flex items-center gap-2">
+              <label className="text-[10px] font-bold text-gray-400 uppercase w-20">Choose Hub</label>
+              <select
+                value={selectedHubId}
+                onChange={(e) => setSelectedHubId(e.target.value)}
+                className="flex-1 bg-gray-900 border border-gray-700 rounded-lg px-3 py-1.5 text-xs text-white outline-none"
+              >
+                <option value="">Select a hub...</option>
+                {warehouses.map(w => (
+                  <option key={w.id} value={w.id}>{w.name}</option>
+                ))}
+              </select>
+              {selectedHubId && (
+                <button
+                  onClick={() => { setSelectedHubId(''); setItemToHubForm({ sku: '', item_name: '', quantity: '', reorder_threshold: '10', unit: 'units' }); }}
+                  className="p-1.5 text-gray-500 hover:text-red-400"
+                  title="Clear hub selection"
+                >
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              )}
+            </div>
+            {selectedHubId && (
+              <form onSubmit={handleAddItemToHub} className="grid grid-cols-2 md:grid-cols-4 gap-2 bg-gray-900/30 border border-gray-700/50 rounded-lg p-2">
+                <span className="text-[10px] text-gray-400 flex items-center col-span-2 md:col-span-4">Adding to <b className="text-amber-400">{whName(selectedHubId)}</b></span>
+                <input
+                  value={itemToHubForm.sku}
+                  onChange={(e) => setItemToHubForm({ ...itemToHubForm, sku: e.target.value })}
+                  placeholder="SKU *"
+                  className="bg-gray-900 border border-gray-700 rounded-lg px-3 py-1.5 text-xs text-white placeholder-gray-500 outline-none"
+                />
+                <input
+                  value={itemToHubForm.item_name}
+                  onChange={(e) => setItemToHubForm({ ...itemToHubForm, item_name: e.target.value })}
+                  placeholder="Item name *"
+                  className="bg-gray-900 border border-gray-700 rounded-lg px-3 py-1.5 text-xs text-white placeholder-gray-500 outline-none"
+                />
+                <input
+                  value={itemToHubForm.quantity}
+                  onChange={(e) => setItemToHubForm({ ...itemToHubForm, quantity: e.target.value })}
+                  placeholder="Qty"
+                  inputMode="numeric"
+                  className="bg-gray-900 border border-gray-700 rounded-lg px-3 py-1.5 text-xs text-white placeholder-gray-500 outline-none"
+                />
+                <input
+                  value={itemToHubForm.reorder_threshold}
+                  onChange={(e) => setItemToHubForm({ ...itemToHubForm, reorder_threshold: e.target.value })}
+                  placeholder="Reorder at"
+                  inputMode="numeric"
+                  className="bg-gray-900 border border-gray-700 rounded-lg px-3 py-1.5 text-xs text-white placeholder-gray-500 outline-none"
+                />
+                <input
+                  value={itemToHubForm.unit}
+                  onChange={(e) => setItemToHubForm({ ...itemToHubForm, unit: e.target.value })}
+                  placeholder="Unit"
+                  className="bg-gray-900 border border-gray-700 rounded-lg px-3 py-1.5 text-xs text-white placeholder-gray-500 outline-none"
+                />
+
+                {/* Delivery location fields (optional): creates a delivery order + auto-route */}
+                <span className="text-[9px] font-bold text-amber-400 uppercase col-span-2 md:col-span-4 flex items-center gap-1">
+                  <MapPin className="w-3 h-3" /> Delivery Location
+                </span>
+                <input
+                  value={deliveryForm.customer_name}
+                  onChange={(e) => setDeliveryForm({ ...deliveryForm, customer_name: e.target.value })}
+                  placeholder="Customer name"
+                  className="bg-gray-900 border border-gray-700 rounded-lg px-3 py-1.5 text-xs text-white placeholder-gray-500 outline-none"
+                />
+                <input
+                  value={deliveryForm.delivery_address}
+                  onChange={(e) => setDeliveryForm({ ...deliveryForm, delivery_address: e.target.value })}
+                  placeholder="Delivery address"
+                  className="bg-gray-900 border border-gray-700 rounded-lg px-3 py-1.5 text-xs text-white placeholder-gray-500 outline-none"
+                />
+                <input
+                  value={deliveryForm.dest_lat}
+                  onChange={(e) => setDeliveryForm({ ...deliveryForm, dest_lat: e.target.value })}
+                  placeholder="Dest lat"
+                  inputMode="decimal"
+                  className="bg-gray-900 border border-gray-700 rounded-lg px-3 py-1.5 text-xs text-white placeholder-gray-500 outline-none"
+                />
+                <input
+                  value={deliveryForm.dest_lng}
+                  onChange={(e) => setDeliveryForm({ ...deliveryForm, dest_lng: e.target.value })}
+                  placeholder="Dest lng"
+                  inputMode="decimal"
+                  className="bg-gray-900 border border-gray-700 rounded-lg px-3 py-1.5 text-xs text-white placeholder-gray-500 outline-none"
+                />
+                <input
+                  value={deliveryForm.weight_kg}
+                  onChange={(e) => setDeliveryForm({ ...deliveryForm, weight_kg: e.target.value })}
+                  placeholder="Weight kg"
+                  inputMode="decimal"
+                  className="bg-gray-900 border border-gray-700 rounded-lg px-3 py-1.5 text-xs text-white placeholder-gray-500 outline-none"
+                />
+
+                <button
+                  type="submit"
+                  disabled={itemToHubBusy}
+                  className="px-3 py-1.5 rounded-lg bg-amber-500 hover:bg-amber-600 text-white text-xs font-bold transition-all disabled:opacity-50 col-span-2 md:col-span-2"
+                >
+                  {itemToHubBusy ? 'Adding...' : 'Add to Hub'}
+                </button>
+              </form>
+            )}
+          </div>
+        )}
         {showItemForm && (
           <form onSubmit={handleAddItem} className="grid grid-cols-2 md:grid-cols-3 gap-2 bg-gray-900/40 border border-gray-800 rounded-xl p-3">
             <select value={itemForm.warehouse_id} onChange={(e) => setItemForm({ ...itemForm, warehouse_id: e.target.value })} className="bg-gray-900 border border-gray-700 rounded-lg px-3 py-1.5 text-xs text-white">
